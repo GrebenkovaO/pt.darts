@@ -16,6 +16,7 @@ class Architect():
         self.w_momentum = w_momentum
         self.w_weight_decay = w_weight_decay
 
+
     def virtual_step(self, trn_X, trn_y, xi, w_optim):
         """
         Compute unrolled weight w' (virtual step)
