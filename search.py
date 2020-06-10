@@ -6,7 +6,8 @@ import numpy as np
 from tensorboardX import SummaryWriter
 from config import SearchConfig
 import utils
-from models.search_cnn import SearchCNNController
+#from models.search_cnn import SearchCNNController
+from models.search_toy import SearchToyController
 from architect import Architect
 from visualize import plot
 
@@ -41,8 +42,9 @@ def main():
         config.dataset, config.data_path, cutout_length=0, validation=False)
 
     net_crit = nn.CrossEntropyLoss().to(device)
-    model = SearchCNNController(input_channels, config.init_channels, n_classes, config.layers,
-                                net_crit, device_ids=config.gpus)
+    model = SearchToyController(net_crit)
+    #model = SearchCNNController(input_channels, config.init_channels, n_classes, config.layers,
+    #                            net_crit, device_ids=config.gpus)
     model = model.to(device)
 
     # weights optimizer
@@ -86,7 +88,7 @@ def main():
         # validation
         cur_step = (epoch+1) * len(train_loader)
         top1 = validate(valid_loader, model, epoch, cur_step)
-
+        """
         # log
         # genotype
         genotype = model.genotype()
@@ -97,11 +99,11 @@ def main():
         caption = "Epoch {}".format(epoch+1)
         plot(genotype.normal, plot_path + "-normal", caption)
         plot(genotype.reduce, plot_path + "-reduce", caption)
-
+        """
         # save
         if best_top1 < top1:
             best_top1 = top1
-            best_genotype = genotype
+            #best_genotype = genotype
             is_best = True
         else:
             is_best = False
@@ -109,7 +111,7 @@ def main():
         print("")
 
     logger.info("Final best Prec@1 = {:.4%}".format(best_top1))
-    logger.info("Best Genotype = {}".format(best_genotype))
+    #logger.info("Best Genotype = {}".format(best_genotype))
 
 
 def train(train_loader, valid_loader, model, architect, w_optim, alpha_optim, lr, epoch):
@@ -140,8 +142,8 @@ def train(train_loader, valid_loader, model, architect, w_optim, alpha_optim, lr
         # gradient clipping
         nn.utils.clip_grad_norm_(model.weights(), config.w_grad_clip)
         w_optim.step()
-
-        prec1, prec5 = utils.accuracy(logits, trn_y, topk=(1, 5))
+        maxk = 1
+        prec1, prec5 = utils.accuracy(logits, trn_y, topk=(1, maxk))
         losses.update(loss.item(), N)
         top1.update(prec1.item(), N)
         top5.update(prec5.item(), N)
@@ -175,8 +177,10 @@ def validate(valid_loader, model, epoch, cur_step):
 
             logits = model(X)
             loss = model.criterion(logits, y)
+            maxk = 1
+            prec1, prec5 = utils.accuracy(logits, y, topk=(1, maxk))
 
-            prec1, prec5 = utils.accuracy(logits, y, topk=(1, 5))
+                     
             losses.update(loss.item(), N)
             top1.update(prec1.item(), N)
             top5.update(prec5.item(), N)

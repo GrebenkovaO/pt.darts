@@ -6,7 +6,40 @@ import torch
 import torchvision.datasets as dset
 import numpy as np
 import preproc
+import torch as t
 
+class DsetMock:
+     def __init__(self, **kwargs):
+          data = np.load('data/synthetic.npy',allow_pickle=True)
+          X_t, Y = data
+          X = X_t.T
+          #X = X.reshape(X.shape[0], 1, X.shape[1])
+          N = X.shape[0]
+          if kwargs.get('validation', False):
+               self.data = self.train_data = t.Tensor(X[:N//2])
+               self.targets = t.Tensor(Y[:N//2])
+          else:
+               self.data = self.train_data = t.Tensor(X[N//2:])
+               self.targets = t.Tensor(Y[N//2:])
+     def __len__(self):
+             return len(self.train_data)
+             
+     def __getitem__(self, index):
+          """
+          Args:
+              index (int): Index
+          Returns:
+              tuple: (image, target) where target is index of the target class.
+          """
+          img, target = self.data[index], int(self.targets[index])
+
+          # doing this so that it is consistent with all other datasets
+          # to return a PIL Image
+          return img, target
+
+
+
+          
 
 def get_data(dataset, data_path, cutout_length, validation):
     """ Get torchvision dataset """
@@ -20,8 +53,11 @@ def get_data(dataset, data_path, cutout_length, validation):
         n_classes = 10
     elif dataset == 'fashionmnist':
         dset_cls = dset.FashionMNIST
-        n_classes = 10
-    else:
+        n_classes = 10        
+    elif dataset  == 'toy':
+         dset_cls = DsetMock
+         n_classes = 2
+    else:    
         raise ValueError(dataset)
 
     trn_transform, val_transform = preproc.data_transforms(dataset, cutout_length)
@@ -33,7 +69,7 @@ def get_data(dataset, data_path, cutout_length, validation):
     except:
             shape = trn_data.data.shape
     input_channels = 3 if len(shape) == 4 else 1
-    assert shape[1] == shape[2], "not expected shape = {}".format(shape)
+    #assert d shape[1] == shape[2], "not expected shape = {}".format(shape)
     input_size = shape[1]
 
     ret = [input_size, input_channels, n_classes, trn_data]
@@ -92,7 +128,6 @@ def accuracy(output, target, topk=(1,)):
     """ Computes the precision@k for the specified values of k """
     maxk = max(topk)
     batch_size = target.size(0)
-
     _, pred = output.topk(maxk, 1, True, True)
     pred = pred.t()
     # one-hot case

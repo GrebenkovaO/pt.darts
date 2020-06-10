@@ -49,6 +49,8 @@ def data_transforms(dataset, cutout_length):
             transforms.RandomAffine(degrees=15, translate=(0.1, 0.1), scale=(0.9, 1.1), shear=0.1),
             transforms.RandomVerticalFlip()
         ]
+    elif dataset == 'toy':
+    	return None, None
     else:
         raise ValueError('not expected dataset = {}'.format(dataset))
 
