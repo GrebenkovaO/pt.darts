@@ -3,6 +3,7 @@ import os
 import torch
 import torch.nn as nn
 import numpy as np
+import sys
 from tensorboardX import SummaryWriter
 from config import SearchConfig
 import utils
@@ -12,19 +13,20 @@ from architect import Architect
 from visualize import plot
 
 
-config = SearchConfig()
-
-device = torch.device("cuda")
-
-# tensorboard
-writer = SummaryWriter(log_dir=os.path.join(config.path, "tb"))
-writer.add_text('config', config.as_markdown(), 0)
-
-logger = utils.get_logger(os.path.join(config.path, "{}.log".format(config.name)))
-config.print_params(logger.info)
 
 
 def main():
+    config = SearchConfig()
+
+    device = torch.device("cuda")
+
+    # tensorboard
+    writer = SummaryWriter(log_dir=os.path.join(config.path, "tb"))
+    writer.add_text('config', config.as_markdown(), 0)
+
+    logger = utils.get_logger(os.path.join(config.path, "{}.log".format(config.name)))
+    config.print_params(logger.info)
+
     logger.info("Logger is set - training start")
 
     # set default gpu device id
@@ -83,11 +85,11 @@ def main():
         model.print_alphas(logger)
 
         # training
-        train(train_loader, valid_loader, model, architect, w_optim, alpha_optim, lr, epoch)
+        train(train_loader, valid_loader, model, architect, w_optim, alpha_optim, lr, epoch, writer, device, config, logger)
 
         # validation
         cur_step = (epoch+1) * len(train_loader)
-        top1 = validate(valid_loader, model, epoch, cur_step)
+        top1 = validate(valid_loader, model, epoch, cur_step, device, config, logger, writer)
         """
         # log
         # genotype
@@ -114,7 +116,7 @@ def main():
     #logger.info("Best Genotype = {}".format(best_genotype))
 
 
-def train(train_loader, valid_loader, model, architect, w_optim, alpha_optim, lr, epoch):
+def train(train_loader, valid_loader, model, architect, w_optim, alpha_optim, lr, epoch, writer, device, config, logger):
     top1 = utils.AverageMeter()
     top5 = utils.AverageMeter()
     losses = utils.AverageMeter()
@@ -163,7 +165,7 @@ def train(train_loader, valid_loader, model, architect, w_optim, alpha_optim, lr
     logger.info("Train: [{:2d}/{}] Final Prec@1 {:.4%}".format(epoch+1, config.epochs, top1.avg))
 
 
-def validate(valid_loader, model, epoch, cur_step):
+def validate(valid_loader, model, epoch, cur_step, device, config, logger, writer):
     top1 = utils.AverageMeter()
     top5 = utils.AverageMeter()
     losses = utils.AverageMeter()
