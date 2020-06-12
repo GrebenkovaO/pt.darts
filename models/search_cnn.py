@@ -78,9 +78,16 @@ class SearchCNN(nn.Module):
 
 class SearchCNNController(nn.Module):
     """ SearchCNN controller supporting multi-gpu """
-    def __init__(self, C_in, C, n_classes, n_layers, criterion, n_nodes=4, stem_multiplier=3,
-                 device_ids=None):
+    def __init__(self, criterion, **kwargs):    
         super().__init__()
+        C_in = kwargs['C_in']
+        C = kwargs['C']
+        n_classes = kwargs['n_classes']
+        n_layers = kwargs['n_layers']
+        n_nodes= kwargs['n_nodes']
+        stem_multiplier= kwargs['stem_multiplier']
+        device_ids= kwargs.get('device_ids', None)
+        
         self.n_nodes = n_nodes
         self.criterion = criterion
         if device_ids is None:

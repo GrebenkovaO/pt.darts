@@ -30,17 +30,20 @@ class SearchToy(nn.Module):
 
 class SearchToyController(nn.Module):
     """ SearchCNN controller supporting multi-gpu """
-    def __init__(self,  criterion):
+    def __init__(self,  criterion, **kwargs):
         super().__init__()
         self.criterion = criterion
 
         self.alphas_ = nn.Parameter(1e-3*torch.randn(3))
         self.net = SearchToy()
+        self.pruned = False
 
 
     def forward(self, x):
-        weights_normal = F.softmax(self.alphas_, dim=-1)
-
+        if not self.pruned:
+            weights_normal = F.softmax(self.alphas_, dim=-1)
+        else:
+            weights_normal = self.alphas_
         return self.net(x, weights_normal)
 
 
@@ -60,7 +63,10 @@ class SearchToyController(nn.Module):
             handler.setFormatter(logging.Formatter("%(message)s"))
 
         logger.info("####### ALPHA #######")
-        logger.info(F.softmax(self.alphas_, dim=-1))
+        if not self.pruned:
+            logger.info(F.softmax(self.alphas_, dim=-1))
+        else:
+            logger.info(self.alphas_)
 
 
         # restore formats
@@ -71,5 +77,16 @@ class SearchToyController(nn.Module):
     def weights(self):
         return self.net.parameters()
 
+    def genotype(self):
+        names = ['const', 'simple' ,'complex']
+        return names[self.alphas()[0].argmax()]
     
-    
+    def prune(self):
+        argmax = self.alphas()[0].argmax()
+        self.alphas_.data *= 0 
+        self.alphas_.data[argmax] += 1
+        self.pruned = True
+        
+    def plot_genotype(self,path,caption):
+        pass 
+            

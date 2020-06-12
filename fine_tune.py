@@ -14,7 +14,7 @@ from importlib import import_module
 
 
 def main():
-    config = SearchConfig()
+    config = SearchConfig(section='fine-tune')
 
     device = torch.device("cuda")
 
@@ -38,49 +38,45 @@ def main():
     torch.backends.cudnn.benchmark = True
 
     # get data with meta info
-    input_size, input_channels, n_classes, train_data = utils.get_data(
-        config.dataset, config.data_path, cutout_length=0, validation=False)
+    input_size, input_channels, n_classes, train_data, valid_data = utils.get_data(
+        config.dataset, config.data_path, cutout_length=0, validation=True)
+        
     if config.loss_type == 'ce':
         net_crit = nn.CrossEntropyLoss().to(device)
     else:
         raise NotImplementedError
-    module_name, class_name = config.controller_class.rsplit('.', 1)
-    controller_cls = getattr(import_module(module_name), class_name)
-    model = controller_cls(net_crit, **config.__dict__)
+    logger.debug('loading checkpoint')
+    best_path = os.path.join(config.path, 'best.pth.tar')
+    
+    model = torch.load(best_path)
+    
+    
+    model.prune()
     model = model.to(device)
-
+    
     # weights optimizer
     w_optim = torch.optim.SGD(model.weights(), config.w_lr, momentum=config.w_momentum,
                               weight_decay=config.w_weight_decay)
-    # alphas optimizer
-    alpha_optim = torch.optim.Adam(model.alphas(), config.alpha_lr, betas=(0.5, 0.999),
-                                   weight_decay=config.alpha_weight_decay)
-
-    # split data to train/validation
-    n_train = len(train_data)
-    split = int(n_train * config.validate_split)
-    indices = list(range(n_train))
-    if split <= 0:
-        logger.debug('using train as validation')
-        valid_sampler = train_sampler = torch.utils.data.sampler.SubsetRandomSampler(indices)    
-    else:
-        train_sampler = torch.utils.data.sampler.SubsetRandomSampler(indices[:split])
-        valid_sampler = torch.utils.data.sampler.SubsetRandomSampler(indices[split:])    
+    
+    
     
     train_loader = torch.utils.data.DataLoader(train_data,
                                                batch_size=config.batch_size,
-                                               sampler=train_sampler,
+                                               shuffle=True,
                                                num_workers=config.workers,
                                                pin_memory=True)
-    valid_loader = torch.utils.data.DataLoader(train_data,
+    valid_loader = torch.utils.data.DataLoader(valid_data,
                                                batch_size=config.batch_size,
-                                               sampler=valid_sampler,
+                                               shuffle=False,
                                                num_workers=config.workers,
                                                pin_memory=True)
+                                               
     lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         w_optim, config.epochs, eta_min=config.w_lr_min)
     architect = Architect(model, config.w_momentum, config.w_weight_decay)
-
+    model.print_alphas(logger)
+    first_top1 = validate(valid_loader, model, -1, 0, device, config, logger, writer)
+    os.system('mkdir -p '+config.fine_tune_path)
     # training loop
     best_top1 = 0.
     for epoch in range(config.epochs):
@@ -88,41 +84,29 @@ def main():
         lr = lr_scheduler.get_lr()[0]
 
         model.print_alphas(logger)
-
+        
         # training
-        train(train_loader, valid_loader, model, architect, w_optim, alpha_optim, lr, epoch, writer, device, config, logger)
+        train(train_loader,  model, architect, w_optim,  lr, epoch, writer, device, config, logger)
 
         # validation
         cur_step = (epoch+1) * len(train_loader)
         top1 = validate(valid_loader, model, epoch, cur_step, device, config, logger, writer)
 
-        # log
-        # genotype
-        genotype = model.genotype()
-        logger.info("genotype = {}".format(genotype))
-
-        # genotype as a image
-        plot_path = os.path.join(config.plot_path, "EP{:02d}".format(epoch+1))
-        caption = "Epoch {}".format(epoch+1)
-        model.plot_genotype(plot_path, caption)
-        #plot(genotype.normal, plot_path + "-normal", caption)
-        #plot(genotype.reduce, plot_path + "-reduce", caption)
-
         # save
         if best_top1 < top1:
             best_top1 = top1
-            best_genotype = genotype
             is_best = True
         else:
             is_best = False
-        utils.save_checkpoint(model, config.path, is_best)
+        utils.save_checkpoint(model, config.fine_tune_path, is_best)
         print("")
 
+    logger.info("Initial best Prec@1 = {:.4%}".format(first_top1))
     logger.info("Final best Prec@1 = {:.4%}".format(best_top1))
-    logger.info("Best Genotype = {}".format(best_genotype))
 
 
-def train(train_loader, valid_loader, model, architect, w_optim, alpha_optim, lr, epoch, writer, device, config, logger):
+
+def train(train_loader,  model, architect, w_optim,  lr, epoch, writer, device, config, logger):
     top1 = utils.AverageMeter()
     top5 = utils.AverageMeter()
     losses = utils.AverageMeter()
@@ -132,19 +116,10 @@ def train(train_loader, valid_loader, model, architect, w_optim, alpha_optim, lr
 
     model.train()
 
-    for step, ((trn_X, trn_y), (val_X, val_y)) in enumerate(zip(train_loader, valid_loader)):
+    for step, (trn_X, trn_y) in enumerate(train_loader):
         trn_X, trn_y = trn_X.to(device, non_blocking=True), trn_y.to(device, non_blocking=True)
-        val_X, val_y = val_X.to(device, non_blocking=True), val_y.to(device, non_blocking=True)
         N = trn_X.size(0)
 
-        # phase 2. architect step (alpha)
-        alpha_optim.zero_grad()
-        if config.simple_alpha_update != 0:        
-            arch_loss = architect.net.loss(val_X, val_y)
-            arch_loss.backward()
-        else:
-            architect.unrolled_backward(trn_X, trn_y, val_X, val_y, lr, w_optim)
-        alpha_optim.step()
 
         # phase 1. child network step (w)
         w_optim.zero_grad()

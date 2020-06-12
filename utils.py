@@ -15,12 +15,13 @@ class DsetMock:
           X = X_t.T
           #X = X.reshape(X.shape[0], 1, X.shape[1])
           N = X.shape[0]
-          if kwargs.get('validation', False):
+          if kwargs.get('train', True):
                self.data = self.train_data = t.Tensor(X[:N//2])
                self.targets = t.Tensor(Y[:N//2])
           else:
                self.data = self.train_data = t.Tensor(X[N//2:])
                self.targets = t.Tensor(Y[N//2:])
+               
      def __len__(self):
              return len(self.train_data)
              
