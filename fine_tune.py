@@ -8,7 +8,6 @@ from tensorboardX import SummaryWriter
 from config import SearchConfig
 import utils
 from architect import Architect
-from visualize import plot
 from importlib import import_module
 
 
@@ -41,10 +40,6 @@ def main():
     input_size, input_channels, n_classes, train_data, valid_data = utils.get_data(
         config.dataset, config.data_path, cutout_length=0, validation=True)
         
-    if config.loss_type == 'ce':
-        net_crit = nn.CrossEntropyLoss().to(device)
-    else:
-        raise NotImplementedError
     logger.debug('loading checkpoint')
     best_path = os.path.join(config.path, 'best.pth.tar')
     
@@ -123,18 +118,20 @@ def train(train_loader,  model, architect, w_optim,  lr, epoch, writer, device, 
 
         # phase 1. child network step (w)
         w_optim.zero_grad()
-        logits = model(trn_X)
-        loss = model.criterion(logits, trn_y)
+
+        loss = model.loss(trn_X, trn_y)
         loss.backward()
         # gradient clipping
         nn.utils.clip_grad_norm_(model.weights(), config.w_grad_clip)
-        w_optim.step()
-        prec1, prec5 = utils.accuracy(logits, trn_y, topk=(1, config.validation_top_k))
+        w_optim.step()    
         losses.update(loss.item(), N)
-        top1.update(prec1.item(), N)
-        top5.update(prec5.item(), N)
+        
 
         if step % config.print_freq == 0 or step == len(train_loader)-1:
+            logits = model(trn_X)
+            prec1, prec5 = utils.accuracy(logits, trn_y, topk=(1, config.validation_top_k))
+            top1.update(prec1.item(), N)
+            top5.update(prec5.item(), N)
             logger.info(
                 "Train: [{:2d}/{}] Step {:03d}/{:03d} Loss {losses.avg:.3f} "
                 "Prec@(1,5) ({top1.avg:.1%}, {top5.avg:.1%})".format(

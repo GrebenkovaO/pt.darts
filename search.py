@@ -8,7 +8,6 @@ from tensorboardX import SummaryWriter
 from config import SearchConfig
 import utils
 from architect import Architect
-from visualize import plot
 from importlib import import_module
 
 
@@ -40,13 +39,10 @@ def main():
     # get data with meta info
     input_size, input_channels, n_classes, train_data = utils.get_data(
         config.dataset, config.data_path, cutout_length=0, validation=False)
-    if config.loss_type == 'ce':
-        net_crit = nn.CrossEntropyLoss().to(device)
-    else:
-        raise NotImplementedError
+    
     module_name, class_name = config.controller_class.rsplit('.', 1)
     controller_cls = getattr(import_module(module_name), class_name)
-    model = controller_cls(net_crit, **config.__dict__)
+    model = controller_cls(device, **config.__dict__)
     model = model.to(device)
 
     # weights optimizer
@@ -148,22 +144,25 @@ def train(train_loader, valid_loader, model, architect, w_optim, alpha_optim, lr
 
         # phase 1. child network step (w)
         w_optim.zero_grad()
-        logits = model(trn_X)
-        loss = model.criterion(logits, trn_y)
+        
+        loss = model.loss(trn_X, trn_y)
         loss.backward()
+        
         # gradient clipping
         nn.utils.clip_grad_norm_(model.weights(), config.w_grad_clip)
         w_optim.step()
-        prec1, prec5 = utils.accuracy(logits, trn_y, topk=(1, config.validation_top_k))
         losses.update(loss.item(), N)
-        top1.update(prec1.item(), N)
-        top5.update(prec5.item(), N)
-
+            
         if step % config.print_freq == 0 or step == len(train_loader)-1:
+            logits = model(trn_X)
+            prec1, prec5 = utils.accuracy(logits, trn_y, topk=(1, config.validation_top_k))
+
+            top1.update(prec1.item(), N)
+            top5.update(prec5.item(), N)
             logger.info(
                 "Train: [{:2d}/{}] Step {:03d}/{:03d} Loss {losses.avg:.3f} "
-                "Prec@(1,5) ({top1.avg:.1%}, {top5.avg:.1%})".format(
-                    epoch+1, config.epochs, step, len(train_loader)-1, losses=losses,
+                "Prec@(1,{maxk}) ({top1.avg:.1%}, {top5.avg:.1%})".format(
+                    epoch+1, config.epochs, step, len(train_loader)-1, losses=losses, maxk=config.validation_top_k,
                     top1=top1, top5=top5))
 
         writer.add_scalar('train/loss', loss.item(), cur_step)
@@ -198,9 +197,9 @@ def validate(valid_loader, model, epoch, cur_step, device, config, logger, write
             if step % config.print_freq == 0 or step == len(valid_loader)-1:
                 logger.info(
                     "Valid: [{:2d}/{}] Step {:03d}/{:03d} Loss {losses.avg:.3f} "
-                    "Prec@(1,5) ({top1.avg:.1%}, {top5.avg:.1%})".format(
+                    "Prec@(1,{maxk}) ({top1.avg:.1%}, {top5.avg:.1%})".format(
                         epoch+1, config.epochs, step, len(valid_loader)-1, losses=losses,
-                        top1=top1, top5=top5))
+                        top1=top1,  top5=top5, maxk=config.validation_top_k))
 
     writer.add_scalar('val/loss', losses.avg, cur_step)
     writer.add_scalar('val/top1', top1.avg, cur_step)

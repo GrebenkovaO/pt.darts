@@ -2,8 +2,6 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from models.search_cells import SearchCell
-import genotypes as gt
 from torch.nn.parallel._functions import Broadcast
 from torch.nn import Linear, Parameter
 import logging
@@ -30,9 +28,9 @@ class SearchToy(nn.Module):
 
 class SearchToyController(nn.Module):
     """ SearchCNN controller supporting multi-gpu """
-    def __init__(self,  criterion, **kwargs):
+    def __init__(self,  device, **kwargs):
         super().__init__()
-        self.criterion = criterion
+        self.criterion = nn.CrossEntropyLoss().to(device)
 
         self.alphas_ = nn.Parameter(1e-3*torch.randn(3))
         self.net = SearchToy()

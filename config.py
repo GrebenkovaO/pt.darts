@@ -1,7 +1,6 @@
 """ Config class for search/augment """
 import argparse
 import os
-import genotypes as gt
 from functools import partial
 from configobj import ConfigObj
 import torch
@@ -45,7 +44,6 @@ class SearchConfig(BaseConfig):
         parser = get_parser("Search config")
         parser.add_argument('--cfg', type=str)
         parser.add_argument('--name', type=str)
-        parser.add_argument('--loss_type', type=str, default='ce')
         parser.add_argument('--validation_top_k', type=int, default=5)                
         parser.add_argument('--controller_class', type = str, default = 'models.search_cnn.SearchCNNController' )
         parser.add_argument('--dataset',  type=str, help='CIFAR10 / MNIST / FashionMNIST')
@@ -86,7 +84,7 @@ class SearchConfig(BaseConfig):
                         t = str
                 else:
                     t = str    
-                print (t,k)                                     
+                                                     
                 args.__dict__[k] = t(cfg[section][k])
         if  not args.name or not args.dataset:
             raise ValueError()                            
@@ -100,39 +98,3 @@ class SearchConfig(BaseConfig):
         self.gpus = parse_gpus(self.gpus)
 
 
-class AugmentConfig(BaseConfig):
-    def build_parser(self):
-        parser = get_parser("Augment config")
-        parser.add_argument('--name', required=True)
-        parser.add_argument('--dataset', required=True, help='CIFAR10 / MNIST / FashionMNIST')
-        parser.add_argument('--batch_size', type=int, default=96, help='batch size')
-        parser.add_argument('--lr', type=float, default=0.025, help='lr for weights')
-        parser.add_argument('--momentum', type=float, default=0.9, help='momentum')
-        parser.add_argument('--weight_decay', type=float, default=3e-4, help='weight decay')
-        parser.add_argument('--grad_clip', type=float, default=5.,
-                            help='gradient clipping for weights')
-        parser.add_argument('--print_freq', type=int, default=200, help='print frequency')
-        parser.add_argument('--gpus', default='0', help='gpu device ids separated by comma. '
-                            '`all` indicates use all gpus.')
-        parser.add_argument('--epochs', type=int, default=600, help='# of training epochs')
-        parser.add_argument('--init_channels', type=int, default=36)
-        parser.add_argument('--layers', type=int, default=20, help='# of layers')
-        parser.add_argument('--seed', type=int, default=2, help='random seed')
-        parser.add_argument('--workers', type=int, default=4, help='# of workers')
-        parser.add_argument('--aux_weight', type=float, default=0.4, help='auxiliary loss weight')
-        parser.add_argument('--cutout_length', type=int, default=16, help='cutout length')
-        parser.add_argument('--drop_path_prob', type=float, default=0.2, help='drop path prob')
-
-        parser.add_argument('--genotype', required=True, help='Cell genotype')
-
-        return parser
-
-    def __init__(self):
-        parser = self.build_parser()
-        args = parser.parse_args()
-        super().__init__(**vars(args))
-
-        self.data_path = './data/'
-        self.path = os.path.join('augments', self.name)
-        self.genotype = gt.from_str(self.genotype)
-        self.gpus = parse_gpus(self.gpus)
