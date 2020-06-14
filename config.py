@@ -65,6 +65,8 @@ class SearchConfig(BaseConfig):
         parser.add_argument('--seed', type=int, default=2, help='random seed')
         parser.add_argument('--workers', type=int, default=4, help='# of workers')
         parser.add_argument('--alpha_lr', type=float, default=3e-4, help='lr for alpha')
+        parser.add_argument('--quality', type=str, default='top1', help='qualtiy criterion (top1 or negloss)')
+        parser.add_argument('--use_train_quality', type=int, default=0, help='use quality to early stop on train')
         parser.add_argument('--simple_alpha_update', type=int, default=0, help='update alpha without unrolling')
         parser.add_argument('--alpha_weight_decay', type=float, default=1e-3,
                             help='weight decay for alpha')

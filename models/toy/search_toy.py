@@ -12,16 +12,16 @@ class SearchToy(nn.Module):
     def __init__(self):
         super().__init__()
         self.model1 = nn.Parameter(t.ones(2))
-        self.model2 = Linear(1,2)
-        self.model3 = Linear(25,2)
-        
+        self.model2 = Linear(1,2, bias=False)
+        self.model3 = Linear(25,2, bias = False)
+        self.sm = Linear(2,2, bias = False)
 
 
     def forward(self, x,  alpha):
         r1 = self.model1
-        r2 = self.model2(x[:,:1])
-        r3 = self.model3(x)
-        logits = r1*alpha[0]+r2*alpha[1]+r3*alpha[2]
+        r2 = F.tanh(self.model2(x[:,:1]))
+        r3 = F.tanh(self.model3(x))
+        logits = self.sm(r1*alpha[0]+r2*alpha[1]+r3*alpha[2])
         return logits
         
 

@@ -91,8 +91,8 @@ def get_logger(file_path):
     stream_handler = logging.StreamHandler()
     stream_handler.setFormatter(formatter)
 
-    logger.addHandler(file_handler)
-    logger.addHandler(stream_handler)
+    #logger.addHandler(file_handler)
+    #logger.addHandler(stream_handler)
     logger.setLevel(logging.INFO)
 
     return logger

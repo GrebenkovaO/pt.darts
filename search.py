@@ -78,7 +78,7 @@ def main():
     architect = Architect(model, config.w_momentum, config.w_weight_decay)
 
     # training loop
-    best_top1 = 0.
+    best = 0
     for epoch in range(config.epochs):
         lr_scheduler.step()
         lr = lr_scheduler.get_lr()[0]
@@ -86,11 +86,11 @@ def main():
         model.print_alphas(logger)
 
         # training
-        train(train_loader, valid_loader, model, architect, w_optim, alpha_optim, lr, epoch, writer, device, config, logger)
+        train_qual = train(train_loader, valid_loader, model, architect, w_optim, alpha_optim, lr, epoch, writer, device, config, logger)
 
         # validation
         cur_step = (epoch+1) * len(train_loader)
-        top1 = validate(valid_loader, model, epoch, cur_step, device, config, logger, writer)
+        val_qual = validate(valid_loader, model, epoch, cur_step, device, config, logger, writer)
 
         # log
         # genotype
@@ -104,17 +104,23 @@ def main():
         #plot(genotype.normal, plot_path + "-normal", caption)
         #plot(genotype.reduce, plot_path + "-reduce", caption)
 
+        if config.use_train_quality != 0:
+            cur_qual = train_qual
+        else:
+            cur_qual = val_qual
+            
         # save
-        if best_top1 < top1:
-            best_top1 = top1
+        if best < cur_qual:
+            best = cur_qual
             best_genotype = genotype
             is_best = True
         else:
             is_best = False
         utils.save_checkpoint(model, config.path, is_best)
-        print("")
+        logger.info("Quality{}: {} \n\n".format('*' if is_best else '', cur_qual))
 
-    logger.info("Final best Prec@1 = {:.4%}".format(best_top1))
+
+    logger.info("Final best =  {}".format(best))
     logger.info("Best Genotype = {}".format(best_genotype))
 
 
@@ -171,7 +177,14 @@ def train(train_loader, valid_loader, model, architect, w_optim, alpha_optim, lr
         cur_step += 1
 
     logger.info("Train: [{:2d}/{}] Final Prec@1 {:.4%}".format(epoch+1, config.epochs, top1.avg))
+    if config.quality == 'negloss':
+        return -losses.avg
+    elif config.quality == 'top1':
+        return top1.avg
+    elif config.quality == 'last':
+        return cur_step    
 
+    
 
 def validate(valid_loader, model, epoch, cur_step, device, config, logger, writer):
     top1 = utils.AverageMeter()
@@ -207,7 +220,12 @@ def validate(valid_loader, model, epoch, cur_step, device, config, logger, write
 
     logger.info("Valid: [{:2d}/{}] Final Prec@1 {:.4%}".format(epoch+1, config.epochs, top1.avg))
 
-    return top1.avg
+    if config.quality == 'negloss':
+        return -losses.avg
+    elif config.quality == 'top1':
+        return top1.avg
+    elif config.quality == 'last':
+        return cur_step  
 
 
 if __name__ == "__main__":
