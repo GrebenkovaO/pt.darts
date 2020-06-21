@@ -21,7 +21,7 @@ def main():
     writer = SummaryWriter(log_dir=os.path.join(config.path, "tb"))
     writer.add_text('config', config.as_markdown(), 0)
 
-    logger = utils.get_logger(os.path.join(config.path, "{}.log".format(config.name)))
+    logger = utils.get_logger(os.path.join(config.path, "{}_tune.log".format(config.name)))
     config.print_params(logger.info)
 
     logger.info("Logger is set - training start")

@@ -1,7 +1,7 @@
 """ CNN cell for architecture search """
 import torch
 import torch.nn as nn
-import  models.cnn.ops as ops
+import  models.cnn_var_naive.ops as ops
 
 
 class SearchCell(nn.Module):

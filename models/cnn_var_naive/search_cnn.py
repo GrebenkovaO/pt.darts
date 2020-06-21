@@ -2,9 +2,11 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from models.cnn.search_cells import SearchCell
+from models.cnn_var_naive.search_cells import SearchCell
+from models.cnn_var_naive.ops import NaiveVarConv2d, NaiveVarLinear
 import genotypes as gt
 from torch.nn.parallel._functions import Broadcast
+
 from visualize import plot 
 import logging
 
@@ -17,7 +19,7 @@ def broadcast_list(l, device_ids):
     return l_copies
 
 
-class SearchCNN(nn.Module):
+class VarSearchCNN(nn.Module):
     """ Search CNN model """
     def __init__(self, C_in, C, n_classes, n_layers, n_nodes=4, stem_multiplier=3):
         """
@@ -37,7 +39,7 @@ class SearchCNN(nn.Module):
 
         C_cur = stem_multiplier * C
         self.stem = nn.Sequential(
-            nn.Conv2d(C_in, C_cur, 3, 1, 1, bias=False),
+            NaiveVarConv2d(C_in, C_cur, 3, 1, 1, bias=False),
             nn.BatchNorm2d(C_cur)
         )
 
@@ -62,8 +64,9 @@ class SearchCNN(nn.Module):
             C_pp, C_p = C_p, C_cur_out
 
         self.gap = nn.AdaptiveAvgPool2d(1)
-        self.linear = nn.Linear(C_p, n_classes)
+        self.linear = NaiveVarLinear(C_p, n_classes)
 
+        
     def forward(self, x, weights_normal, weights_reduce):
         s0 = s1 = self.stem(x)
 
@@ -77,7 +80,7 @@ class SearchCNN(nn.Module):
         return logits
 
 
-class SearchCNNController(nn.Module):
+class VarSearchCNNController(nn.Module):
     """ SearchCNN controller supporting multi-gpu """
     def __init__(self, device, **kwargs):    
         super().__init__()
@@ -88,9 +91,9 @@ class SearchCNNController(nn.Module):
         n_nodes= int(kwargs['n_nodes'])
         stem_multiplier= int(kwargs['stem_multiplier'])
         device_ids= kwargs.get('device_ids', None)
-        
+        self.dataset_size = int(kwargs['dataset size'])
         self.n_nodes = n_nodes
-        
+        self.stochastic = True        
         if device_ids is None:
             device_ids = list(range(torch.cuda.device_count()))
         self.device_ids = device_ids
@@ -99,8 +102,22 @@ class SearchCNNController(nn.Module):
         # initialize architect parameters: alphas
         n_ops = len(gt.PRIMITIVES)
 
+        self.net = VarSearchCNN(C_in, C, n_classes, n_layers, n_nodes, stem_multiplier)
+        self.t_h = nn.Parameter(t.ones(1) * float(kwargs['initial temp']))
+        
+        self.delta = float(kwargs['delta'])
+        
         self.alpha_normal = nn.ParameterList()
         self.alpha_reduce = nn.ParameterList()
+        self.alpha_w_h = {}
+        self.alpha_h = nn.ParameterList()        
+        
+        for w in self.net.parameters():
+            if 'sigma' in w.__dict__:
+                self.alpha_h.append(nn.Parameter(torch.zeros(w.shape)))            
+                self.alpha_w_h[w] = self.alpha_h[-1]
+            
+        
 
         for i in range(n_nodes):
             self.alpha_normal.append(nn.Parameter(1e-3*torch.randn(i+2, n_ops)))
@@ -112,14 +129,13 @@ class SearchCNNController(nn.Module):
             if 'alpha' in n:
                 self._alphas.append((n, p))
 
-        self.net = SearchCNN(C_in, C, n_classes, n_layers, n_nodes, stem_multiplier)
+
+    def new_epoch(self):
+        self.t_h.data += self.delta
 
     def forward(self, x):
-        weights_normal = [F.softmax(alpha, dim=-1) for alpha in self.alpha_normal]
-        weights_reduce = [F.softmax(alpha, dim=-1) for alpha in self.alpha_reduce]
-
         if len(self.device_ids) == 1:
-            return self.net(x, weights_normal, weights_reduce)
+            return self.net(x)
 
         # scatter x
         xs = nn.parallel.scatter(x, self.device_ids)
@@ -136,7 +152,22 @@ class SearchCNNController(nn.Module):
 
     def loss(self, X, y):
         logits = self.forward(X)
-        return self.criterion(logits, y)
+        if self.stochastic:
+            kld = self.kld()
+            #self.t_h.data += self.delta
+            return kld/ self.dataset_size  + self.criterion(logits, y)
+        else:
+            return self.criterion(logits, y)
+    
+    def kld(self):
+        k = 0
+        for w,h  in self.alpha_w_h.items():
+            eps_w = torch.distributions.Normal(w, torch.exp(w.sigma))
+            eps_h = torch.distributions.Normal(w*0, torch.exp(h))
+            k +=  torch.distributions.kl_divergence(eps_w, eps_h).sum()
+        return k
+            
+            
 
     def print_alphas(self, logger):
         # remove formats
@@ -168,6 +199,7 @@ class SearchCNNController(nn.Module):
                            reduce=gene_reduce, reduce_concat=concat)
 
     def prune(self):
+        self.stochastic = False
         for i in range(len(self.alpha_normal)):
             for j in range(self.alpha_normal[i].shape[0]):
                 _, id = torch.topk(self.alpha_normal[i].data[j], 2) 
