@@ -17,7 +17,7 @@ OPS = {
     'dil_conv_5x5': lambda C, stride, affine: DilConv(C, C, 5, stride, 4, 2, affine=affine), # 9x9
     'conv_7x1_1x7': lambda C, stride, affine: FacConv(C, C, 7, stride, 3, affine=affine)
 }
-
+# https://github.com/HolyBayes/pytorch_ard/blob/master/torch_ard/torch_ard.py
 
 def drop_path_(x, drop_prob, training):
     if training and drop_prob > 0.:
@@ -28,20 +28,32 @@ def drop_path_(x, drop_prob, training):
 
     return x
 
-class NaiveVarConv2d(nn.Conv2d):
+class LocalVarConv2d(nn.Conv2d):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.stochastic = True        
         self.log_sigma = nn.Parameter(t.ones(self.weight.shape).to(self.weight.device) * -3.0)    
         self.weight.sigma = self.log_sigma
-    def forward(self, x):
+
+    def forward(self, x):   
         if not self.stochastic:
             return self._conv_forward(x, self.weight)
         else:
-            eps = t.distributions.Normal(self.weight, t.exp(self.log_sigma))
-            return self._conv_forward(x, eps.rsample())
+            eps = 1e-8
+            W = self.weight
+            zeros = torch.zeros_like(W)
+    
+            conved_mu = nn.functional.conv2d(x, W, self.bias, self.stride,
+                self.padding, self.dilation, self.groups)
+            log_alpha = self.log_sigma
+            conved_si = torch.sqrt(eps + nn.functional.conv2d(x*x,
+                torch.exp(log_alpha) * W * W, self.bias, self.stride,
+                self.padding, self.dilation, self.groups))
+            conved = conved_mu + \
+            conved_si * t.distributions.Normal(torch.zeros_like(conved_mu), torch.ones_like(conved_mu)).rsample()
+        return conved
             
-class NaiveVarLinear(nn.Linear):
+class LocalVarLinear(nn.Linear):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.stochastic = True        
@@ -50,9 +62,17 @@ class NaiveVarLinear(nn.Linear):
     def forward(self, x):
         if not self.stochastic:
             return nn.functional.linear(x, self.weight, self.bias)
-        else:
-            eps = t.distributions.Normal(self.weight, t.exp(self.log_sigma))
-            return nn.functional.linear(x, eps.rsample(), self.bias)
+        else:           
+            W = self.weight
+            zeros = torch.zeros_like(W)
+            mu = x.matmul(W.t())
+            eps = 1e-8
+            log_alpha = self.log_sigma
+            si = torch.sqrt((x * x) \
+                            .matmul(((torch.exp(log_alpha) * W * W)+eps).t()))
+            activation = mu + t.distributions.Normal(torch.zeros_like(mu), torch.ones_like(mu)).rsample() * si
+        
+            return activation + self.bias
             
         
                 
@@ -108,7 +128,7 @@ class StdConv(nn.Module):
         super().__init__()
         self.net = nn.Sequential(
             nn.ReLU(),
-            NaiveVarConv2d(C_in, C_out, kernel_size, stride, padding, bias=False),
+            LocalVarConv2d(C_in, C_out, kernel_size, stride, padding, bias=False),
             nn.BatchNorm2d(C_out, affine=affine)
         )
 
@@ -124,8 +144,8 @@ class FacConv(nn.Module):
         super().__init__()
         self.net = nn.Sequential(
             nn.ReLU(),
-            NaiveVarConv2d(C_in, C_in, (kernel_length, 1), stride, padding, bias=False),
-            NaiveVarConv2d(C_in, C_out, (1, kernel_length), stride, padding, bias=False),
+            LocalVarConv2d(C_in, C_in, (kernel_length, 1), stride, padding, bias=False),
+            LocalVarConv2d(C_in, C_out, (1, kernel_length), stride, padding, bias=False),
             nn.BatchNorm2d(C_out, affine=affine)
         )
 
@@ -144,13 +164,15 @@ class DilConv(nn.Module):
         super().__init__()
         self.net = nn.Sequential(
             nn.ReLU(),
-            NaiveVarConv2d(C_in, C_in, kernel_size, stride, padding, dilation=dilation, groups=C_in,
+            LocalVarConv2d(C_in, C_in, kernel_size, stride, padding, dilation=dilation, groups=C_in,
                       bias=False),
-            NaiveVarConv2d(C_in, C_out, 1, stride=1, padding=0, bias=False),
+            LocalVarConv2d(C_in, C_out, 1, stride=1, padding=0, bias=False),
             nn.BatchNorm2d(C_out, affine=affine)
         )
 
     def forward(self, x):
+        #print (self.net[1])
+        self.net[1].forward(x)
         return self.net(x)
 
 
@@ -197,8 +219,8 @@ class FactorizedReduce(nn.Module):
     def __init__(self, C_in, C_out, affine=True):
         super().__init__()
         self.relu = nn.ReLU()
-        self.conv1 = NaiveVarConv2d(C_in, C_out // 2, 1, stride=2, padding=0, bias=False)
-        self.conv2 = NaiveVarConv2d(C_in, C_out // 2, 1, stride=2, padding=0, bias=False)
+        self.conv1 = LocalVarConv2d(C_in, C_out // 2, 1, stride=2, padding=0, bias=False)
+        self.conv2 = LocalVarConv2d(C_in, C_out // 2, 1, stride=2, padding=0, bias=False)
         self.bn = nn.BatchNorm2d(C_out, affine=affine)
 
     def forward(self, x):
@@ -226,4 +248,7 @@ class MixedOp(nn.Module):
             weights: weight for each operation
         """
         
-        return sum(w * op(x) for w, op in zip(weights, self._ops))
+        if len(weights[0].shape)==1: #non-scalar
+            return sum(w.view(-1, 1, 1, 1) * op(x) for w, op in zip(weights, self._ops))    
+        else:
+            return sum(w * op(x) for w, op in zip(weights, self._ops))

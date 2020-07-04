@@ -12,7 +12,7 @@ class Architect():
             w_momentum: weights momentum
         """
         self.net = net
-        self.v_net = copy.deepcopy(net)
+        self.v_net =  None # lazy 
         self.w_momentum = w_momentum
         self.w_weight_decay = w_weight_decay
 
@@ -56,6 +56,8 @@ class Architect():
             xi: learning rate for virtual gradient step (same as net lr)
             w_optim: weights optimizer - for virtual step
         """
+        if self.v_net is None:
+            self.v_net = copy.deepcopy(net)        
         # do virtual step (calc w`)
         self.virtual_step(trn_X, trn_y, xi, w_optim)
 

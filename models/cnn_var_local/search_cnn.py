@@ -2,13 +2,15 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from models.cnn_var_naive.search_cells import SearchCell
-from models.cnn_var_naive.ops import NaiveVarConv2d, NaiveVarLinear
+from models.cnn_var_local.search_cells import SearchCell
+from models.cnn_var_local.ops import LocalVarConv2d, LocalVarLinear
 import genotypes as gt
 from torch.nn.parallel._functions import Broadcast
 
 from visualize import plot
 import logging
+
+import numpy as np
 
 
 def broadcast_list(l, device_ids):
@@ -19,7 +21,7 @@ def broadcast_list(l, device_ids):
     return l_copies
 
 
-class VarSearchCNN(nn.Module):
+class LVarSearchCNN(nn.Module):
     """ Search CNN model """
 
     def __init__(self,  C_in, C, n_classes, n_layers, n_nodes=4, stem_multiplier=3):
@@ -40,7 +42,7 @@ class VarSearchCNN(nn.Module):
 
         C_cur = stem_multiplier * C
         self.stem = nn.Sequential(
-            NaiveVarConv2d(C_in, C_cur, 3, 1, 1, bias=False),
+            LocalVarConv2d(C_in, C_cur, 3, 1, 1, bias=False),
             nn.BatchNorm2d(C_cur)
         )
 
@@ -66,8 +68,9 @@ class VarSearchCNN(nn.Module):
             C_pp, C_p = C_p, C_cur_out
 
         self.gap = nn.AdaptiveAvgPool2d(1)
-        self.linear = NaiveVarLinear(C_p, n_classes)
-        self.log_q_t = nn.Parameter(torch.zeros(1))
+        self.linear = LocalVarLinear(C_p, n_classes)
+        self.log_q_t_mean = nn.Parameter(torch.zeros(1))
+        self.log_q_t_log_sigma = nn.Parameter(torch.zeros(1))
         self.q_gamma_normal = nn.ParameterList()
         self.q_gamma_reduce = nn.ParameterList()
         n_ops = len(gt.PRIMITIVES)
@@ -82,15 +85,16 @@ class VarSearchCNN(nn.Module):
 
     def forward(self, x):
         s0 = s1 = self.stem(x)
-
+        log_t = torch.distributions.Normal(
+            self.log_q_t_mean, torch.exp(self.log_q_t_log_sigma)).rsample()
+        t = torch.exp(log_t)
         for cell in self.cells:
             gammas = self.q_gamma_reduce if cell.reduction else self.q_gamma_normal
             if self.stochastic:
                 weights = [torch.distributions.RelaxedOneHotCategorical(
-                    torch.exp(self.log_q_t), logits=gamma).rsample() for gamma in gammas]
+                    t, logits=gamma).rsample([x.shape[0]]) for gamma in gammas]
             else:
                 weights = gammas
-                
 
             s0, s1 = s1, cell(s0, s1, weights)
 
@@ -99,34 +103,36 @@ class VarSearchCNN(nn.Module):
         logits = self.linear(out)
         return logits
 
-    def prune(self, k=2):        
-        self.stochastic = False 
-        for edges in self.q_gamma_normal:           
-            edge_max, primitive_indices = torch.topk(edges[:, :-1], 1) # ignore 'none'
-            edges.data*=0
-            topk_edge_values, topk_edge_indices = torch.topk(edge_max.view(-1), k)
+    def prune(self, k=2):
+        self.stochastic = False
+        for edges in self.q_gamma_normal:
+            edge_max, primitive_indices = torch.topk(
+                edges[:, :-1], 1)  # ignore 'none'
+            edges.data *= 0
+            topk_edge_values, topk_edge_indices = torch.topk(
+                edge_max.view(-1), k)
             node_gene = []
-            
+
             for edge_idx in topk_edge_indices:
                 edges.data[edge_idx, primitive_indices[edge_idx]] += 1
-        for edges in self.q_gamma_reduce:           
-            edge_max, primitive_indices = torch.topk(edges[:, :-1], 1) # ignore 'none'
-            edges.data*=0
-            topk_edge_values, topk_edge_indices = torch.topk(edge_max.view(-1), k)
+        for edges in self.q_gamma_reduce:
+            edge_max, primitive_indices = torch.topk(
+                edges[:, :-1], 1)  # ignore 'none'
+            edges.data *= 0
+            topk_edge_values, topk_edge_indices = torch.topk(
+                edge_max.view(-1), k)
             node_gene = []
             for edge_idx in topk_edge_indices:
                 edges.data[edge_idx, primitive_indices[edge_idx]] += 1
         for c in self.cells:
             for subdag in c.dag:
-                for mix in subdag:                
+                for mix in subdag:
                     for op in mix._ops:
-                        op.stochastic = False 
-        self.linear.stochastic = False 
+                        op.stochastic = False
+        self.linear.stochastic = False
 
 
-                
-
-class VarSearchCNNController(nn.Module):
+class LVarSearchCNNController(nn.Module):
     """ SearchCNN controller supporting multi-gpu """
 
     def __init__(self, device, **kwargs):
@@ -148,7 +154,11 @@ class VarSearchCNNController(nn.Module):
 
         # initialize architect parameters: alphas
         n_ops = len(gt.PRIMITIVES)
-        self.t_h = nn.Parameter(torch.ones(1) * float(kwargs['initial temp']))
+
+        self.log_t_h_mean = nn.Parameter(torch.ones(
+            1) * (float(kwargs['initial temp log'])))
+        self.log_t_h_log_sigma = nn.Parameter(torch.ones(
+            1) * float(kwargs['initial temp log sigma']))
 
         self.delta = float(kwargs['delta'])
 
@@ -160,8 +170,8 @@ class VarSearchCNNController(nn.Module):
 
         self.sample_num = int(kwargs['sample num'])
 
-        self.net = VarSearchCNN(C_in, C,  n_classes,
-                                n_layers, n_nodes, stem_multiplier)
+        self.net = LVarSearchCNN(C_in, C,  n_classes,
+                                 n_layers, n_nodes, stem_multiplier)
 
         for w in self.net.parameters():
             if 'sigma' in w.__dict__:
@@ -181,14 +191,13 @@ class VarSearchCNNController(nn.Module):
                 self._alphas.append((n, p))
 
     def new_epoch(self):
-        self.t_h.data += self.delta
+        self.log_t_h_log_sigma.data += self.delta
 
     def forward(self, x):
         return self.net(x)
 
     def loss(self, X, y):
         logits = self.forward(X)
-        
         if self.stochastic:
             kld = self.kld()
             #self.t_h.data += self.delta
@@ -203,26 +212,40 @@ class VarSearchCNNController(nn.Module):
             eps_h = torch.distributions.Normal(w*0, torch.exp(h))
             k += torch.distributions.kl_divergence(eps_w, eps_h).sum()
 
-        for a, ga in zip(self.alpha_normal, self.net.q_gamma_normal):
-            g = torch.distributions.RelaxedOneHotCategorical(
-                torch.exp(self.net.log_q_t), logits=ga)
-            p_g = torch.distributions.RelaxedOneHotCategorical(
-                self.t_h, logits=a)
-            for _ in range(self.sample_num):
-                sample = (g.rsample()+0.0001)
-                k += (g.log_prob(sample) - p_g.log_prob(sample)).sum() / \
-                    self.sample_num
+        eps_q_t = torch.distributions.Normal(
+            self.net.log_q_t_mean, torch.exp(self.net.log_q_t_log_sigma))
+        eps_p_t = torch.distributions.Normal(
+            self.log_t_h_mean, torch.exp(self.log_t_h_log_sigma))
+        k += torch.distributions.kl_divergence(eps_q_t, eps_p_t).sum()
 
         for a, ga in zip(self.alpha_reduce, self.net.q_gamma_reduce):
-            g = torch.distributions.RelaxedOneHotCategorical(
-                torch.exp(self.net.log_q_t), logits=ga)
-            p_g = torch.distributions.RelaxedOneHotCategorical(
-                self.t_h, logits=a)
 
+            q_t = torch.exp(torch.distributions.Normal(
+                self.net.log_q_t_mean, torch.exp(self.net.log_q_t_log_sigma)).rsample())
+            g = torch.distributions.RelaxedOneHotCategorical(
+                torch.exp(q_t), logits=ga)
+            q_t2 = torch.exp(torch.distributions.Normal(
+                self.net.log_q_t_mean, torch.exp(self.net.log_q_t_log_sigma)).rsample())
+            p_g = torch.distributions.RelaxedOneHotCategorical(
+                torch.exp(q_t2), logits=a)
+
+            sample = (g.rsample()+0.0001)
+            k += (g.log_prob(sample) - p_g.log_prob(sample)).sum() / \
+                self.sample_num
+        for a, ga in zip(self.alpha_normal, self.net.q_gamma_normal):
+            q_t = torch.exp(torch.distributions.Normal(
+                self.net.log_q_t_mean, torch.exp(self.net.log_q_t_log_sigma)).rsample())
+            g = torch.distributions.RelaxedOneHotCategorical(
+                torch.exp(q_t), logits=ga)
+            q_t2 = torch.exp(torch.distributions.Normal(
+                self.net.log_q_t_mean, torch.exp(self.net.log_q_t_log_sigma)).rsample())
+            p_g = torch.distributions.RelaxedOneHotCategorical(
+                torch.exp(q_t2), logits=a)
             for _ in range(self.sample_num):
                 sample = (g.rsample()+0.0001)
                 k += (g.log_prob(sample) - p_g.log_prob(sample)).sum() / \
                     self.sample_num
+
         return k
 
     def print_alphas(self, logger):
@@ -244,7 +267,7 @@ class VarSearchCNNController(nn.Module):
 
             logger.info("####### GAMMA #######")
             logger.info("# Gamma - normal")
-            
+
             for alpha in self.net.q_gamma_normal:
                 logger.info(F.softmax(alpha, dim=-1))
 
@@ -253,11 +276,13 @@ class VarSearchCNNController(nn.Module):
                 logger.info(F.softmax(alpha, dim=-1))
             logger.info("#####################")
 
-            logger.info('Temp:'+str(torch.exp(self.net.log_q_t)))
+            logger.info('Temp: {}...{}'.format(str(torch.exp(self.net.log_q_t_mean-2*torch.exp(self.net.log_q_t_log_sigma))),
+                                               str(torch.exp(self.net.log_q_t_mean+2*torch.exp(self.net.log_q_t_log_sigma)))))
+
         else:
             logger.info("####### GAMMA #######")
             logger.info("# Gamma - normal")
-            
+
             for alpha in self.net.q_gamma_normal:
                 logger.info(alpha)
 
@@ -278,11 +303,11 @@ class VarSearchCNNController(nn.Module):
         return gt.Genotype(normal=gene_normal, normal_concat=concat,
                            reduce=gene_reduce, reduce_concat=concat)
 
-    def prune(self):        
+    def prune(self):
         self.stochastic = False
-        self.net.stochastic = False 
+        self.net.stochastic = False
         self.net.prune()
-        
+
     def weights(self):
         return self.net.parameters()
 

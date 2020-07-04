@@ -11,21 +11,28 @@ from architect import Architect
 from importlib import import_module
 
 
-
 def main():
     config = SearchConfig()
-
+    
     device = torch.device("cuda")
 
     # tensorboard
     writer = SummaryWriter(log_dir=os.path.join(config.path, "tb"))
     writer.add_text('config', config.as_markdown(), 0)
 
-    logger = utils.get_logger(os.path.join(config.path, "{}_train.log".format(config.name)))
+    logger = utils.get_logger(os.path.join(
+        config.path, "{}_train.log".format(config.name)))
     config.print_params(logger.info)
 
     logger.info("Logger is set - training start")
-
+    if int(config.profile)!=0:
+        logger.info('entering profile mode')
+        profile = True         
+        config.epochs = 1
+        max_batches = config.print_freq
+    else:
+        profile = False 
+        max_batches =  None
     # set default gpu device id
     torch.cuda.set_device(config.gpus[0])
 
@@ -39,7 +46,7 @@ def main():
     # get data with meta info
     input_size, input_channels, n_classes, train_data = utils.get_data(
         config.dataset, config.data_path, cutout_length=0, validation=False)
-    
+
     module_name, class_name = config.controller_class.rsplit('.', 1)
     controller_cls = getattr(import_module(module_name), class_name)
     model = controller_cls(device, **config.__dict__)
@@ -58,11 +65,14 @@ def main():
     indices = list(range(n_train))
     if split <= 0:
         logger.debug('using train as validation')
-        valid_sampler = train_sampler = torch.utils.data.sampler.SubsetRandomSampler(indices)    
+        valid_sampler = train_sampler = torch.utils.data.sampler.SubsetRandomSampler(
+            indices)
     else:
-        train_sampler = torch.utils.data.sampler.SubsetRandomSampler(indices[:split])
-        valid_sampler = torch.utils.data.sampler.SubsetRandomSampler(indices[split:])    
-    
+        train_sampler = torch.utils.data.sampler.SubsetRandomSampler(
+            indices[:split])
+        valid_sampler = torch.utils.data.sampler.SubsetRandomSampler(
+            indices[split:])
+
     train_loader = torch.utils.data.DataLoader(train_data,
                                                batch_size=config.batch_size,
                                                sampler=train_sampler,
@@ -79,6 +89,8 @@ def main():
 
     # training loop
     best = 0
+    best_genotype = None
+    
     for epoch in range(config.epochs):
         lr_scheduler.step()
         lr = lr_scheduler.get_lr()[0]
@@ -86,11 +98,26 @@ def main():
         model.print_alphas(logger)
 
         # training
-        train_qual = train(train_loader, valid_loader, model, architect, w_optim, alpha_optim, lr, epoch, writer, device, config, logger)
-
+        if profile:
+            with torch.autograd.profiler.profile(use_cuda=True) as prof:
+                train_qual = train(train_loader, valid_loader, model, architect,
+                           w_optim, alpha_optim, lr, epoch, writer, device, config, logger, max_batches=max_batches)
+            print ('cpu')
+            print(prof.key_averages().table(sort_by="cpu_time_total", row_limit=10))
+            print(prof.key_averages().table(sort_by="cpu_time", row_limit=10))
+            print ('cuda')
+            print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=10))
+            print(prof.key_averages().table(sort_by="cuda_time", row_limit=10))
+            break
+        
+        train_qual = train(train_loader, valid_loader, model, architect,
+                           w_optim, alpha_optim, lr, epoch, writer, device, config, logger, max_batches=max_batches)
+        
+            
         # validation
         cur_step = (epoch+1) * len(train_loader)
-        val_qual = validate(valid_loader, model, epoch, cur_step, device, config, logger, writer)
+        val_qual = validate(valid_loader, model, epoch,
+                            cur_step, device, config, logger, writer)
 
         # log
         # genotype
@@ -108,7 +135,7 @@ def main():
             cur_qual = train_qual
         else:
             cur_qual = val_qual
-            
+
         # save
         if best < cur_qual:
             best = cur_qual
@@ -117,14 +144,14 @@ def main():
         else:
             is_best = False
         utils.save_checkpoint(model, config.path, is_best)
-        logger.info("Quality{}: {} \n\n".format('*' if is_best else '', cur_qual))
-
+        logger.info("Quality{}: {} \n\n".format(
+            '*' if is_best else '', cur_qual))
 
     logger.info("Final best =  {}".format(best))
     logger.info("Best Genotype = {}".format(best_genotype))
 
 
-def train(train_loader, valid_loader, model, architect, w_optim, alpha_optim, lr, epoch, writer, device, config, logger):
+def train(train_loader, valid_loader, model, architect, w_optim, alpha_optim, lr, epoch, writer, device, config, logger, max_batches=None):
     top1 = utils.AverageMeter()
     top5 = utils.AverageMeter()
     losses = utils.AverageMeter()
@@ -135,33 +162,39 @@ def train(train_loader, valid_loader, model, architect, w_optim, alpha_optim, lr
     model.train()
 
     for step, ((trn_X, trn_y), (val_X, val_y)) in enumerate(zip(train_loader, valid_loader)):
-        trn_X, trn_y = trn_X.to(device, non_blocking=True), trn_y.to(device, non_blocking=True)
-        val_X, val_y = val_X.to(device, non_blocking=True), val_y.to(device, non_blocking=True)
+        trn_X, trn_y = trn_X.to(device, non_blocking=True), trn_y.to(
+            device, non_blocking=True)
+        val_X, val_y = val_X.to(device, non_blocking=True), val_y.to(
+            device, non_blocking=True)
         N = trn_X.size(0)
 
         # phase 2. architect step (alpha)
+
         alpha_optim.zero_grad()
-        if config.simple_alpha_update != 0:        
+        if config.simple_alpha_update != 0:
             arch_loss = architect.net.loss(val_X, val_y)
             arch_loss.backward()
         else:
-            architect.unrolled_backward(trn_X, trn_y, val_X, val_y, lr, w_optim)
+            architect.unrolled_backward(
+                trn_X, trn_y, val_X, val_y, lr, w_optim)
+
         alpha_optim.step()
 
         # phase 1. child network step (w)
         w_optim.zero_grad()
-        
+
         loss = model.loss(trn_X, trn_y)
         loss.backward()
-        
         # gradient clipping
         nn.utils.clip_grad_norm_(model.weights(), config.w_grad_clip)
+
         w_optim.step()
         losses.update(loss.item(), N)
-            
+
         if step % config.print_freq == 0 or step == len(train_loader)-1:
             logits = model(trn_X)
-            prec1, prec5 = utils.accuracy(logits, trn_y, topk=(1, config.validation_top_k))
+            prec1, prec5 = utils.accuracy(
+                logits, trn_y, topk=(1, config.validation_top_k))
 
             top1.update(prec1.item(), N)
             top5.update(prec5.item(), N)
@@ -170,21 +203,23 @@ def train(train_loader, valid_loader, model, architect, w_optim, alpha_optim, lr
                 "Prec@(1,{maxk}) ({top1.avg:.1%}, {top5.avg:.1%})".format(
                     epoch+1, config.epochs, step, len(train_loader)-1, losses=losses, maxk=config.validation_top_k,
                     top1=top1, top5=top5))
+        if max_batches is not None  and step+1>=max_batches:
+            break
 
         writer.add_scalar('train/loss', loss.item(), cur_step)
         writer.add_scalar('train/top1', prec1.item(), cur_step)
         writer.add_scalar('train/top5', prec5.item(), cur_step)
         cur_step += 1
 
-    logger.info("Train: [{:2d}/{}] Final Prec@1 {:.4%}".format(epoch+1, config.epochs, top1.avg))
+    logger.info(
+        "Train: [{:2d}/{}] Final Prec@1 {:.4%}".format(epoch+1, config.epochs, top1.avg))
     if config.quality == 'negloss':
         return -losses.avg
     elif config.quality == 'top1':
         return top1.avg
     elif config.quality == 'last':
-        return cur_step    
+        return cur_step
 
-    
 
 def validate(valid_loader, model, epoch, cur_step, device, config, logger, writer):
     top1 = utils.AverageMeter()
@@ -195,14 +230,15 @@ def validate(valid_loader, model, epoch, cur_step, device, config, logger, write
 
     with torch.no_grad():
         for step, (X, y) in enumerate(valid_loader):
-            X, y = X.to(device, non_blocking=True), y.to(device, non_blocking=True)
+            X, y = X.to(device, non_blocking=True), y.to(
+                device, non_blocking=True)
             N = X.size(0)
 
             logits = model(X)
             loss = model.criterion(logits, y)
-            prec1, prec5 = utils.accuracy(logits, y, topk=(1, config.validation_top_k))
+            prec1, prec5 = utils.accuracy(
+                logits, y, topk=(1, config.validation_top_k))
 
-                     
             losses.update(loss.item(), N)
             top1.update(prec1.item(), N)
             top5.update(prec5.item(), N)
@@ -213,19 +249,21 @@ def validate(valid_loader, model, epoch, cur_step, device, config, logger, write
                     "Prec@(1,{maxk}) ({top1.avg:.1%}, {top5.avg:.1%})".format(
                         epoch+1, config.epochs, step, len(valid_loader)-1, losses=losses,
                         top1=top1,  top5=top5, maxk=config.validation_top_k))
+                
 
     writer.add_scalar('val/loss', losses.avg, cur_step)
     writer.add_scalar('val/top1', top1.avg, cur_step)
     writer.add_scalar('val/top5', top5.avg, cur_step)
 
-    logger.info("Valid: [{:2d}/{}] Final Prec@1 {:.4%}".format(epoch+1, config.epochs, top1.avg))
+    logger.info(
+        "Valid: [{:2d}/{}] Final Prec@1 {:.4%}".format(epoch+1, config.epochs, top1.avg))
 
     if config.quality == 'negloss':
         return -losses.avg
     elif config.quality == 'top1':
         return top1.avg
     elif config.quality == 'last':
-        return cur_step  
+        return cur_step
 
 
 if __name__ == "__main__":

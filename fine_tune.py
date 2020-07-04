@@ -47,6 +47,7 @@ def main():
     
     
     model.prune()
+    
     model = model.to(device)
     
     # weights optimizer
