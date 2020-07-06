@@ -182,6 +182,7 @@ class LVarSearchCNNController(nn.Module):
         self.alpha_reduce = nn.ParameterList()
 
         self.alpha_w_h = {}
+        self.sigmas_w = {}
         self.alpha_h = nn.ParameterList()
 
         self.sample_num = int(kwargs['sample num'])
@@ -193,6 +194,7 @@ class LVarSearchCNNController(nn.Module):
             if 'sigma' in w.__dict__:
                 self.alpha_h.append(nn.Parameter(torch.zeros(w.shape)))
                 self.alpha_w_h[w] = self.alpha_h[-1]
+                self.sigmas_w[w] = w.sigma
 
         for i in range(n_nodes):
             self.alpha_normal.append(
