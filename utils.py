@@ -84,6 +84,7 @@ def get_logger(file_path):
     """ Make python logger """
     # [!] Since tensorboardX use default logger (e.g. logging.info()), we should use custom logger
     os.system('rm '+file_path)
+    
     logging.getLogger().handlers = []
     logger = logging.getLogger('darts')
     log_format = '%(asctime)s | %(message)s'

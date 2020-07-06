@@ -188,7 +188,6 @@ class VarSearchCNNController(nn.Module):
 
     def loss(self, X, y):
         logits = self.forward(X)
-        
         if self.stochastic:
             kld = self.kld()
             #self.t_h.data += self.delta

@@ -85,12 +85,13 @@ class LVarSearchCNN(nn.Module):
 
     def forward(self, x):
         s0 = s1 = self.stem(x)
-        log_t = torch.distributions.Normal(
-            self.log_q_t_mean, torch.exp(self.log_q_t_log_sigma)).rsample()
-        t = torch.exp(log_t)
+        if False and self.stochastic: # remove
+            log_t = torch.distributions.Normal(
+                self.log_q_t_mean, torch.exp(self.log_q_t_log_sigma)).rsample()
+            t = torch.exp(log_t)
         for cell in self.cells:
             gammas = self.q_gamma_reduce if cell.reduction else self.q_gamma_normal
-            if self.stochastic:
+            if False and self.stochastic: #remove
                 weights = [torch.distributions.RelaxedOneHotCategorical(
                     t, logits=gamma).rsample([x.shape[0]]) for gamma in gammas]
             else:
@@ -130,6 +131,21 @@ class LVarSearchCNN(nn.Module):
                     for op in mix._ops:
                         op.stochastic = False
         self.linear.stochastic = False
+
+#https://github.com/pytorch/pytorch/blob/master/torch/distributions/kl.py#L405
+def kl_normal_normal(pl, ql, ps, qs):
+    
+    #ps = ps.view(-1)
+    #qs = qs.view(-1)
+    #pl = pl.view(-1)
+    #ql = ql.view(-1)
+    
+    var_ratio = (ps / qs).pow(2)
+    
+    t1 = ((pl - ql) / qs).pow(2)
+    
+    result =  0.5 * (var_ratio + t1 - 1 - var_ratio.log()).sum()
+    return result
 
 
 class LVarSearchCNNController(nn.Module):
@@ -190,7 +206,32 @@ class LVarSearchCNNController(nn.Module):
             if 'alpha' in n:
                 self._alphas.append((n, p))
 
-    def new_epoch(self):
+        self.eps_gaus = []
+    
+    def writer_callback(self, writer, cur_step):
+        hist_values = []
+        for val in self.net.q_gamma_normal:
+            hist_values.extend(F.softmax(val).cpu().detach().numpy().tolist())
+        hist_values = np.array(hist_values).flatten().tolist()
+        writer.add_histogram('train/gamma_normal', hist_values, cur_step)# %%
+        
+        hist_values = []
+        for val in self.net.q_gamma_reduce:
+            hist_values.extend(F.softmax(val).cpu().detach().numpy().tolist())
+        hist_values = np.array(hist_values).flatten().tolist()
+        writer.add_histogram('train/gamma_reduce', hist_values, cur_step)# %%        
+        
+        
+        hist_values = self.net.log_q_t_mean.cpu().detach().numpy() + np.random.randn(10000)*torch.exp(self.net.log_q_t_log_sigma).detach().cpu().numpy()
+        writer.add_histogram('train/temp', np.exp(hist_values), cur_step, bins='auto') # %%        
+        writer.add_histogram('train/log_temp', hist_values, cur_step, bins='auto') 
+        
+        #writer.add_scalar('train/temp_min', torch.exp(self.net.log_q_t_mean-2*torch.exp(self.net.log_q_t_log_sigma)).cpu().detach().numpy(), cur_step)
+        #writer.add_scalar('train/temp_max', torch.exp(self.net.log_q_t_mean+2*torch.exp(self.net.log_q_t_log_sigma)).cpu().detach().numpy(), cur_step)
+        
+
+
+    def new_epoch(self, e, writer):
         self.log_t_h_log_sigma.data += self.delta
 
     def forward(self, x):
@@ -207,45 +248,56 @@ class LVarSearchCNNController(nn.Module):
 
     def kld(self):
         k = 0
-        for w, h in self.alpha_w_h.items():
-            eps_w = torch.distributions.Normal(w, torch.exp(w.sigma))
-            eps_h = torch.distributions.Normal(w*0, torch.exp(h))
-            k += torch.distributions.kl_divergence(eps_w, eps_h).sum()
-
-        eps_q_t = torch.distributions.Normal(
-            self.net.log_q_t_mean, torch.exp(self.net.log_q_t_log_sigma))
-        eps_p_t = torch.distributions.Normal(
-            self.log_t_h_mean, torch.exp(self.log_t_h_log_sigma))
-        k += torch.distributions.kl_divergence(eps_q_t, eps_p_t).sum()
-
+        
+        for w, h in self.alpha_w_h.items():            
+            
+            k+= kl_normal_normal( w, torch.zeros_like(w), torch.exp(w.sigma), torch.exp(h))    
+            
+            
+            #eps_w = torch.distributions.Normal(w, torch.exp(w.sigma))
+            #eps_h = torch.distributions.Normal(torch.zeros_like(w),  torch.exp(h))
+            #k += torch.distributions.kl_divergence(eps_w, eps_h).sum()
+            #pass 
+            
+        
+        #eps_q_t = torch.distributions.Normal(
+        #    self.net.log_q_t_mean, torch.exp(self.net.log_q_t_log_sigma))
+        #eps_p_t = torch.distributions.Normal(
+        #    self.log_t_h_mean, torch.exp(self.log_t_h_log_sigma))
+        #k += torch.distributions.kl_divergence(eps_q_t, eps_p_t).sum()
+        k +=  kl_normal_normal(self.net.log_q_t_mean,  self.log_t_h_mean,
+        torch.exp(self.net.log_q_t_log_sigma),
+        torch.exp(self.log_t_h_log_sigma)
+        )
+        
         for a, ga in zip(self.alpha_reduce, self.net.q_gamma_reduce):
 
-            q_t = torch.exp(torch.distributions.Normal(
-                self.net.log_q_t_mean, torch.exp(self.net.log_q_t_log_sigma)).rsample())
+            q_t = torch.exp(torch.normal(
+                self.net.log_q_t_mean, torch.exp(self.net.log_q_t_log_sigma)))
             g = torch.distributions.RelaxedOneHotCategorical(
-                torch.exp(q_t), logits=ga)
-            q_t2 = torch.exp(torch.distributions.Normal(
-                self.net.log_q_t_mean, torch.exp(self.net.log_q_t_log_sigma)).rsample())
+                q_t, logits=ga)
+            q_t2 = torch.exp(torch.normal(
+                self.net.log_q_t_mean, torch.exp(self.net.log_q_t_log_sigma)))
             p_g = torch.distributions.RelaxedOneHotCategorical(
-                torch.exp(q_t2), logits=a)
+                q_t2, logits=a)
 
             sample = (g.rsample()+0.0001)
             k += (g.log_prob(sample) - p_g.log_prob(sample)).sum() / \
                 self.sample_num
         for a, ga in zip(self.alpha_normal, self.net.q_gamma_normal):
-            q_t = torch.exp(torch.distributions.Normal(
-                self.net.log_q_t_mean, torch.exp(self.net.log_q_t_log_sigma)).rsample())
+            q_t = torch.exp(torch.normal(
+                self.net.log_q_t_mean, torch.exp(self.net.log_q_t_log_sigma)))
             g = torch.distributions.RelaxedOneHotCategorical(
-                torch.exp(q_t), logits=ga)
-            q_t2 = torch.exp(torch.distributions.Normal(
-                self.net.log_q_t_mean, torch.exp(self.net.log_q_t_log_sigma)).rsample())
+                q_t, logits=ga)
+            q_t2 = torch.exp(torch.normal(
+                self.net.log_q_t_mean, torch.exp(self.net.log_q_t_log_sigma)))
             p_g = torch.distributions.RelaxedOneHotCategorical(
-                torch.exp(q_t2), logits=a)
+                q_t2, logits=a)
             for _ in range(self.sample_num):
                 sample = (g.rsample()+0.0001)
                 k += (g.log_prob(sample) - p_g.log_prob(sample)).sum() / \
                     self.sample_num
-
+        
         return k
 
     def print_alphas(self, logger):

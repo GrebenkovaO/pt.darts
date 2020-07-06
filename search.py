@@ -17,7 +17,9 @@ def main():
     device = torch.device("cuda")
 
     # tensorboard
-    writer = SummaryWriter(log_dir=os.path.join(config.path, "tb"))
+    tb_path = os.path.join(config.path, "tb")
+    os.system('rm -r '+tb_path)
+    writer = SummaryWriter(log_dir=tb_path)
     writer.add_text('config', config.as_markdown(), 0)
 
     logger = utils.get_logger(os.path.join(
@@ -110,6 +112,7 @@ def main():
             print(prof.key_averages().table(sort_by="cuda_time", row_limit=10))
             break
         
+        model.new_epoch(epoch, writer)
         train_qual = train(train_loader, valid_loader, model, architect,
                            w_optim, alpha_optim, lr, epoch, writer, device, config, logger, max_batches=max_batches)
         
@@ -158,7 +161,7 @@ def train(train_loader, valid_loader, model, architect, w_optim, alpha_optim, lr
 
     cur_step = epoch*len(train_loader)
     writer.add_scalar('train/lr', lr, cur_step)
-
+    
     model.train()
 
     for step, ((trn_X, trn_y), (val_X, val_y)) in enumerate(zip(train_loader, valid_loader)):
@@ -203,9 +206,11 @@ def train(train_loader, valid_loader, model, architect, w_optim, alpha_optim, lr
                 "Prec@(1,{maxk}) ({top1.avg:.1%}, {top5.avg:.1%})".format(
                     epoch+1, config.epochs, step, len(train_loader)-1, losses=losses, maxk=config.validation_top_k,
                     top1=top1, top5=top5))
+            model.writer_callback(writer, cur_step)
         if max_batches is not None  and step+1>=max_batches:
             break
-
+        
+        
         writer.add_scalar('train/loss', loss.item(), cur_step)
         writer.add_scalar('train/top1', prec1.item(), cur_step)
         writer.add_scalar('train/top5', prec5.item(), cur_step)

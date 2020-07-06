@@ -33,10 +33,9 @@ class LocalVarConv2d(nn.Conv2d):
         super().__init__(*args, **kwargs)
         self.stochastic = True        
         self.log_sigma = nn.Parameter(t.ones(self.weight.shape).to(self.weight.device) * -3.0)    
-        self.weight.sigma = self.log_sigma
-
+        self.weight.sigma = self.log_sigma        
     def forward(self, x):   
-        if not self.stochastic:
+        if not self.stochastic: 
             return self._conv_forward(x, self.weight)
         else:
             eps = 1e-8
@@ -50,7 +49,7 @@ class LocalVarConv2d(nn.Conv2d):
                 torch.exp(log_alpha) * W * W, self.bias, self.stride,
                 self.padding, self.dilation, self.groups))
             conved = conved_mu + \
-            conved_si * t.distributions.Normal(torch.zeros_like(conved_mu), torch.ones_like(conved_mu)).rsample()
+            conved_si * torch.normal(torch.zeros_like(conved_mu), torch.ones_like(conved_mu))
         return conved
             
 class LocalVarLinear(nn.Linear):
@@ -60,7 +59,7 @@ class LocalVarLinear(nn.Linear):
         self.log_sigma = nn.Parameter(t.ones(self.weight.shape).to(self.weight.device) * -3.0)    
         self.weight.sigma = self.log_sigma
     def forward(self, x):
-        if not self.stochastic:
+        if  not self.stochastic: 
             return nn.functional.linear(x, self.weight, self.bias)
         else:           
             W = self.weight
@@ -70,7 +69,7 @@ class LocalVarLinear(nn.Linear):
             log_alpha = self.log_sigma
             si = torch.sqrt((x * x) \
                             .matmul(((torch.exp(log_alpha) * W * W)+eps).t()))
-            activation = mu + t.distributions.Normal(torch.zeros_like(mu), torch.ones_like(mu)).rsample() * si
+            activation = mu + torch.normal(torch.zeros_like(mu), torch.ones_like(mu)) * si
         
             return activation + self.bias
             
