@@ -7,6 +7,7 @@ import genotypes as gt
 from torch.nn.parallel._functions import Broadcast
 from visualize import plot 
 import logging
+import numpy as np
 
 
 def broadcast_list(l, device_ids):
@@ -196,3 +197,18 @@ class SearchCNNController(nn.Module):
     def plot_genotype(self, plot_path, caption):
         plot(self.genotype().normal, plot_path+'-normal', caption+'-normal')
         plot(self.genotype().reduce, plot_path+'-reduce', caption+'-reduce')
+        
+    def new_epoch(self,e,w):
+        pass
+        
+    def writer_callback(self, writer, cur_step):
+        hist_values = []
+        for val in self.alphas():
+            hist_values.extend(F.softmax(val).cpu().detach().numpy().tolist())
+        hist_values = np.array(hist_values).flatten().tolist()
+        writer.add_histogram('train/alphas', hist_values, cur_step)# %%
+        
+        
+        #writer.add_scalar('train/temp_min', torch.exp(self.net.log_q_t_mean-2*torch.exp(self.net.log_q_t_log_sigma)).cpu().detach().numpy(), cur_step)
+        #writer.add_scalar('train/temp_max', torch.exp(self.net.log_q_t_mean+2*torch.exp(self.net.log_q_t_log_sigma)).cpu().detach().numpy(), cur_step)
+        
