@@ -85,13 +85,13 @@ class LVarSearchCNN(nn.Module):
 
     def forward(self, x):
         s0 = s1 = self.stem(x)
-        if False and self.stochastic: # remove
+        if self.stochastic: # remove
             log_t = torch.distributions.Normal(
                 self.log_q_t_mean, torch.exp(self.log_q_t_log_sigma)).rsample()
             t = torch.exp(log_t)
         for cell in self.cells:
             gammas = self.q_gamma_reduce if cell.reduction else self.q_gamma_normal
-            if False and self.stochastic: #remove
+            if  self.stochastic: #remove
                 weights = [torch.distributions.RelaxedOneHotCategorical(
                     t, logits=gamma).rsample([x.shape[0]]) for gamma in gammas]
             else:
