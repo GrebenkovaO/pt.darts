@@ -114,10 +114,15 @@ class SearchCNNController(nn.Module):
                 self._alphas.append((n, p))
 
         self.net = SearchCNN(C_in, C, n_classes, n_layers, n_nodes, stem_multiplier)
-
+        self.pruned = False 
+        
     def forward(self, x):
-        weights_normal = [F.softmax(alpha, dim=-1) for alpha in self.alpha_normal]
-        weights_reduce = [F.softmax(alpha, dim=-1) for alpha in self.alpha_reduce]
+        if not self.pruned:
+            weights_normal = [F.softmax(alpha, dim=-1) for alpha in self.alpha_normal]
+            weights_reduce = [F.softmax(alpha, dim=-1) for alpha in self.alpha_reduce]
+        else:
+            weights_normal = self.alpha_normal
+            weights_reduce = self.alpha_reduce
 
         if len(self.device_ids) == 1:
             return self.net(x, weights_normal, weights_reduce)
@@ -168,17 +173,28 @@ class SearchCNNController(nn.Module):
         return gt.Genotype(normal=gene_normal, normal_concat=concat,
                            reduce=gene_reduce, reduce_concat=concat)
 
-    def prune(self):
-        for i in range(len(self.alpha_normal)):
-            for j in range(self.alpha_normal[i].shape[0]):
-                _, id = torch.topk(self.alpha_normal[i].data[j], 2) 
-                self.alpha_normal[i].data[j]*=0
-                self.alpha_normal[i].data[j,id]+=100
-        for i in range(len(self.alpha_reduce)):
-            for j in range(self.alpha_reduce[i].shape[0]):
-                _, id = torch.topk(self.alpha_reduce[i].data[j], 2) 
-                self.alpha_reduce[i].data[j]*=0
-                self.alpha_reduce[i].data[j,id]+=100
+    def prune(self, k = 2):
+        for edges in self.alpha_normal:
+            edge_max, primitive_indices = torch.topk(
+                edges[:, :-1], 1)  # ignore 'none'
+            edges.data *= 0
+            topk_edge_values, topk_edge_indices = torch.topk(
+                edge_max.view(-1), k)
+            node_gene = []
+
+            for edge_idx in topk_edge_indices:
+                edges.data[edge_idx, primitive_indices[edge_idx]] += 1
+        for edges in self.alpha_reduce:
+            edge_max, primitive_indices = torch.topk(
+                edges[:, :-1], 1)  # ignore 'none'
+            edges.data *= 0
+            topk_edge_values, topk_edge_indices = torch.topk(
+                edge_max.view(-1), k)
+            node_gene = []
+            for edge_idx in topk_edge_indices:
+                edges.data[edge_idx, primitive_indices[edge_idx]] += 1
+        self.pruned = True
+                
 
     def weights(self):
         return self.net.parameters()

@@ -45,9 +45,13 @@ class LocalVarConv2d(nn.Conv2d):
             conved_mu = nn.functional.conv2d(x, W, self.bias, self.stride,
                 self.padding, self.dilation, self.groups)
             log_alpha = self.log_sigma
+            #conved_si = torch.sqrt(eps + nn.functional.conv2d(x*x,
+            #    torch.exp(log_alpha) * W * W, self.bias, self.stride,
+            #    self.padding, self.dilation, self.groups))
             conved_si = torch.sqrt(eps + nn.functional.conv2d(x*x,
-                torch.exp(log_alpha) * W * W, self.bias, self.stride,
+                torch.exp(2*log_alpha), self.bias, self.stride,
                 self.padding, self.dilation, self.groups))
+            
             conved = conved_mu + \
             conved_si * torch.normal(torch.zeros_like(conved_mu), torch.ones_like(conved_mu))
         return conved
@@ -67,8 +71,10 @@ class LocalVarLinear(nn.Linear):
             mu = x.matmul(W.t())
             eps = 1e-8
             log_alpha = self.log_sigma
-            si = torch.sqrt((x * x) \
-                            .matmul(((torch.exp(log_alpha) * W * W)+eps).t()))
+            #si = torch.sqrt((x * x) \
+            #                .matmul(((torch.exp(log_alpha) * W * W)+eps).t()))
+            si = torch.sqrt((x * x ) \
+                           .matmul(((torch.exp(2*log_alpha))+eps).t()))
             activation = mu + torch.normal(torch.zeros_like(mu), torch.ones_like(mu)) * si
         
             return activation + self.bias

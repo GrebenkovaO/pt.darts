@@ -91,7 +91,7 @@ class LVarSearchCNN(nn.Module):
             t = torch.exp(log_t)
         for cell in self.cells:
             gammas = self.q_gamma_reduce if cell.reduction else self.q_gamma_normal
-            if  self.stochastic: #remove
+            if  self.stochastic:
                 weights = [torch.distributions.RelaxedOneHotCategorical(
                     t, logits=gamma).rsample([x.shape[0]]) for gamma in gammas]
             else:
@@ -104,7 +104,7 @@ class LVarSearchCNN(nn.Module):
         logits = self.linear(out)
         return logits
 
-    def prune(self, k=2):
+    def prune(self, k=2, layers=True):
         self.stochastic = False
         for edges in self.q_gamma_normal:
             edge_max, primitive_indices = torch.topk(
@@ -125,12 +125,20 @@ class LVarSearchCNN(nn.Module):
             node_gene = []
             for edge_idx in topk_edge_indices:
                 edges.data[edge_idx, primitive_indices[edge_idx]] += 1
-        for c in self.cells:
-            for subdag in c.dag:
-                for mix in subdag:
-                    for op in mix._ops:
-                        op.stochastic = False
-        self.linear.stochastic = False
+        if layers:
+            all_ = [self]
+            i = 0 
+            while i<len(all_):
+                current = all_[i]
+                i+=1
+                try:
+                    for c in current.children():
+                        all_+=[c]
+                except:
+                    pass
+            for c in all_:
+                if 'stochastic' in c.__dict__:
+                    c.stochastic = False                   
 
 #https://github.com/pytorch/pytorch/blob/master/torch/distributions/kl.py#L405
 def kl_normal_normal(pl, ql, ps, qs):
@@ -253,7 +261,7 @@ class LVarSearchCNNController(nn.Module):
         
         for w, h in self.alpha_w_h.items():            
             
-            k+= kl_normal_normal( w, torch.zeros_like(w), torch.exp(w.sigma), torch.exp(h))    
+            k+= kl_normal_normal( w, torch.zeros_like(w), torch.exp(self.sigmas_w[w]), torch.exp(h))    
             
             
             #eps_w = torch.distributions.Normal(w, torch.exp(w.sigma))
@@ -261,7 +269,8 @@ class LVarSearchCNNController(nn.Module):
             #k += torch.distributions.kl_divergence(eps_w, eps_h).sum()
             #pass 
             
-        
+        if not self.net.stochastic:
+            return k
         #eps_q_t = torch.distributions.Normal(
         #    self.net.log_q_t_mean, torch.exp(self.net.log_q_t_log_sigma))
         #eps_p_t = torch.distributions.Normal(
@@ -271,6 +280,7 @@ class LVarSearchCNNController(nn.Module):
         torch.exp(self.net.log_q_t_log_sigma),
         torch.exp(self.log_t_h_log_sigma)
         )
+        
         
         for a, ga in zip(self.alpha_reduce, self.net.q_gamma_reduce):
 
