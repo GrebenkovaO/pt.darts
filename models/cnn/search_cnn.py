@@ -89,7 +89,9 @@ class SearchCNNController(nn.Module):
         n_nodes= int(kwargs['n_nodes'])
         stem_multiplier= int(kwargs['stem_multiplier'])
         device_ids= kwargs.get('device_ids', None)
-        
+        self.use_gs = int(kwargs['use_gs']!=0)
+        self.t = float(kwargs['inital temp'])
+        self.detla = float(kwargs['delta'])
         self.n_nodes = n_nodes
         
         if device_ids is None:
@@ -116,13 +118,20 @@ class SearchCNNController(nn.Module):
         self.net = SearchCNN(C_in, C, n_classes, n_layers, n_nodes, stem_multiplier)
         self.pruned = False 
         
-    def forward(self, x):
-        if not self.pruned:
-            weights_normal = [F.softmax(alpha, dim=-1) for alpha in self.alpha_normal]
-            weights_reduce = [F.softmax(alpha, dim=-1) for alpha in self.alpha_reduce]
-        else:
-            weights_normal = self.alpha_normal
-            weights_reduce = self.alpha_reduce
+    def forward(self, x):        
+        if self.use_gs and not self.pruned:
+            t = torch.ones(1).to(self.device)*self.g
+            weights_reduce = torch.distributions.RelaxedOneHotCategorical(
+                    t, logits=alpha).rsample([x.shape[0]]) for alpha in self.alpha_normal]
+            weights_reduce = torch.distributions.RelaxedOneHotCategorical(
+                    t, logits=alpha).rsample([x.shape[0]]) for alpha in self.alpha_normal]
+        else:            
+            if not self.pruned:
+                weights_normal = [F.softmax(alpha/self.t, dim=-1) for alpha in self.alpha_normal]
+                weights_reduce = [F.softmax(alpha/self.t, dim=-1) for alpha in self.alpha_reduce]
+            else:
+                weights_normal = self.alpha_normal
+                weights_reduce = self.alpha_reduce
 
         if len(self.device_ids) == 1:
             return self.net(x, weights_normal, weights_reduce)
@@ -194,6 +203,7 @@ class SearchCNNController(nn.Module):
             for edge_idx in topk_edge_indices:
                 edges.data[edge_idx, primitive_indices[edge_idx]] += 1
         self.pruned = True
+        self.use_gs = False
                 
 
     def weights(self):
@@ -215,7 +225,8 @@ class SearchCNNController(nn.Module):
         plot(self.genotype().reduce, plot_path+'-reduce', caption+'-reduce')
         
     def new_epoch(self,e,w):
-        pass
+        self.t = self.t + self.delta
+        
         
     def writer_callback(self, writer, cur_step):
         hist_values = []
