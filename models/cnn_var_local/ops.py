@@ -34,8 +34,9 @@ class LocalVarConv2d(nn.Conv2d):
         self.stochastic = True        
         self.log_sigma = nn.Parameter(t.ones(self.weight.shape).to(self.weight.device) * -3.0)    
         self.weight.sigma = self.log_sigma
-        self.log_sigma_b = nn.Parameter(t.ones(self.bias.shape).to(self.bias.device) * -3.0)    
-        self.bias.sigma = self.log_sigma_b
+        if self.bias:
+            self.log_sigma_b = nn.Parameter(t.ones(self.bias.shape).to(self.bias.device) * -3.0)    
+            self.bias.sigma = self.log_sigma_b
     def forward(self, x):   
         if not self.stochastic: 
             return self._conv_forward(x, self.weight)
@@ -54,8 +55,10 @@ class LocalVarConv2d(nn.Conv2d):
                 self.padding, self.dilation, self.groups))
              
             conved = conved_mu + \
-            conved_si * torch.normal(torch.zeros_like(conved_mu), torch.ones_like(conved_mu)) + \
-            torch.exp(2*self.log_sigma_b) * torch.normal(torch.zeros_like(conved_mu), torch.ones_like(conved_mu)) 
+            conved_si * torch.normal(torch.zeros_like(conved_mu), torch.ones_like(conved_mu))
+            if self.bias:
+            conved = conved + torch.exp(2*self.log_sigma_b) *\
+                 torch.normal(torch.zeros_like(conved_mu), torch.ones_like(conved_mu)) 
         return conved
             
 class LocalVarLinear(nn.Linear):
