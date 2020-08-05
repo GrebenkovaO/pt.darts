@@ -89,16 +89,16 @@ class SearchCNNController(nn.Module):
         n_nodes= int(kwargs['n_nodes'])
         stem_multiplier= int(kwargs['stem_multiplier'])
         device_ids= kwargs.get('device_ids', None)
-        self.use_gs = int(kwargs['use_gs']!=0)
-        self.t = float(kwargs['inital temp'])
-        self.detla = float(kwargs['delta'])
+        self.use_gs = int(kwargs['use_gs'])!=0
+        self.t = float(kwargs['initial temp'])
+        self.delta = float(kwargs['delta'])
         self.n_nodes = n_nodes
         
         if device_ids is None:
             device_ids = list(range(torch.cuda.device_count()))
         self.device_ids = device_ids
         self.criterion = nn.CrossEntropyLoss().to(device)
-        
+        self.device = device
         # initialize architect parameters: alphas
         n_ops = len(gt.PRIMITIVES)
 
@@ -120,11 +120,12 @@ class SearchCNNController(nn.Module):
         
     def forward(self, x):        
         if self.use_gs and not self.pruned:
-            t = torch.ones(1).to(self.device)*self.g
-            weights_reduce = torch.distributions.RelaxedOneHotCategorical(
+            t = torch.ones(1).to(self.device)*self.t
+            weights_normal = [torch.distributions.RelaxedOneHotCategorical(
                     t, logits=alpha).rsample([x.shape[0]]) for alpha in self.alpha_normal]
-            weights_reduce = torch.distributions.RelaxedOneHotCategorical(
-                    t, logits=alpha).rsample([x.shape[0]]) for alpha in self.alpha_normal]
+            weights_reduce = [torch.distributions.RelaxedOneHotCategorical(
+                    t, logits=alpha).rsample([x.shape[0]]) for alpha in self.alpha_reduce]
+            #print ([w.shape for w in weights_normal])
         else:            
             if not self.pruned:
                 weights_normal = [F.softmax(alpha/self.t, dim=-1) for alpha in self.alpha_normal]
