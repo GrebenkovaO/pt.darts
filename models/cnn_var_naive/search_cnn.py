@@ -78,14 +78,15 @@ class VarSearchCNN(nn.Module):
             self.q_gamma_reduce.append(
                 nn.Parameter(1e-3*torch.randn(i+2, n_ops)))
 
-        self.stochastic = True
+        self.stochastic_gamma = True
+        self.stochastic_w = True
 
     def forward(self, x):
         s0 = s1 = self.stem(x)
 
         for cell in self.cells:
             gammas = self.q_gamma_reduce if cell.reduction else self.q_gamma_normal
-            if self.stochastic:
+            if self.stochastic_gamma:
                 weights = [torch.distributions.RelaxedOneHotCategorical(
                     torch.exp(self.log_q_t), logits=gamma).rsample() for gamma in gammas]
             else:
@@ -98,6 +99,13 @@ class VarSearchCNN(nn.Module):
         out = out.view(out.size(0), -1)  # flatten
         logits = self.linear(out)
         return logits
+
+    def disable_stochastic_gamma(self):
+        self.stochastic_gamma = False
+
+    def disable_stochastic_w(self):
+        self.stochastic_w = False
+
 
     def prune(self, k=2):        
         self.stochastic = False 
@@ -179,6 +187,9 @@ class VarSearchCNNController(nn.Module):
         for n, p in self.named_parameters():
             if 'alpha' in n:
                 self._alphas.append((n, p))
+        
+        self.stochastic_gamma =  int(kwargs['stochastic_gamma'])!=0
+        self.stochastic_w =  int(kwargs['stochastic_w'])!=0
 
     def new_epoch(self):
         self.t_h.data += self.delta
