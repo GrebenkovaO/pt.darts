@@ -223,10 +223,11 @@ class VarSearchCNNController(nn.Module):
 
     def kld(self):
         k = 0
-        for w, h in self.alpha_w_h.items():
-            eps_w = torch.distributions.Normal(w, torch.exp(w.sigma))
-            eps_h = torch.distributions.Normal(w*0, torch.exp(h))
-            k += torch.distributions.kl_divergence(eps_w, eps_h).sum()
+        if self.stochastic_w:
+            for w, h in self.alpha_w_h.items():
+                eps_w = torch.distributions.Normal(w, torch.exp(w.sigma))
+                eps_h = torch.distributions.Normal(w*0, torch.exp(h))
+                k += torch.distributions.kl_divergence(eps_w, eps_h).sum()
 
         for a, ga in zip(self.alpha_normal, self.net.q_gamma_normal):
             g = torch.distributions.RelaxedOneHotCategorical(
