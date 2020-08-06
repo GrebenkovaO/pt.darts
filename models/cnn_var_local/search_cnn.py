@@ -83,6 +83,23 @@ class LVarSearchCNN(nn.Module):
 
         self.stochastic = True
 
+    def disable_stochastic_w(self):
+        logging.debug('disabling stochastic w')
+        self.stochastic_w = False
+        all_ = [self]
+            i = 0 
+            while i<len(all_):
+                current = all_[i]
+                i+=1
+                try:
+                    for c in current.children():
+                        all_+=[c]
+                except:
+                    pass
+            for c in all_:
+                if 'stochastic' in c.__dict__:
+                    c.stochastic = False 
+
     def forward(self, x):
         s0 = s1 = self.stem(x)
         if self.stochastic: # remove
@@ -217,6 +234,13 @@ class LVarSearchCNNController(nn.Module):
                 self._alphas.append((n, p))
 
         self.eps_gaus = []
+
+        self.stochastic_gamma =  int(kwargs['stochastic_gamma'])!=0
+        self.stochastic_w =  int(kwargs['stochastic_w'])!=0
+        if not self.stochastic_w:
+            self.net.disable_stochastic_w()
+
+
     
     def writer_callback(self, writer, cur_step):
         hist_values = []
@@ -258,16 +282,11 @@ class LVarSearchCNNController(nn.Module):
 
     def kld(self):
         k = 0
-        
-        for w, h in self.alpha_w_h.items():            
+        if not self.stochastic_w:
+            for w, h in self.alpha_w_h.items():            
             
-            k+= kl_normal_normal( w, torch.zeros_like(w), torch.exp(self.sigmas_w[w]), torch.exp(h))    
+                k+= kl_normal_normal( w, torch.zeros_like(w), torch.exp(self.sigmas_w[w]), torch.exp(h))    
             
-            
-            #eps_w = torch.distributions.Normal(w, torch.exp(w.sigma))
-            #eps_h = torch.distributions.Normal(torch.zeros_like(w),  torch.exp(h))
-            #k += torch.distributions.kl_divergence(eps_w, eps_h).sum()
-            #pass 
             
         if not self.net.stochastic:
             return k
