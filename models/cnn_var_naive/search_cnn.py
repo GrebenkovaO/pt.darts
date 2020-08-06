@@ -105,6 +105,19 @@ class VarSearchCNN(nn.Module):
 
     def disable_stochastic_w(self):
         self.stochastic_w = False
+        all_ = [self]
+            i = 0 
+            while i<len(all_):
+                current = all_[i]
+                i+=1
+                try:
+                    for c in current.children():
+                        all_+=[c]
+                except:
+                    pass
+            for c in all_:
+                if 'stochastic' in c.__dict__:
+                    c.stochastic = False  
 
 
     def prune(self, k=2):        
@@ -190,6 +203,8 @@ class VarSearchCNNController(nn.Module):
         
         self.stochastic_gamma =  int(kwargs['stochastic_gamma'])!=0
         self.stochastic_w =  int(kwargs['stochastic_w'])!=0
+        if not self.stochastic_w:
+            self.net.disable_stochastic_w()
 
     def new_epoch(self):
         self.t_h.data += self.delta
