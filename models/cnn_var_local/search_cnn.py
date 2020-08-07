@@ -82,6 +82,8 @@ class LVarSearchCNN(nn.Module):
                 nn.Parameter(1e-3*torch.randn(i+2, n_ops)))
 
         self.stochastic = True
+        self.stochastic_gamma = True
+        self.stochastic_w = True
 
     def disable_stochastic_w(self):
         logging.debug('disabling stochastic w')
@@ -102,10 +104,14 @@ class LVarSearchCNN(nn.Module):
 
     def forward(self, x):
         s0 = s1 = self.stem(x)
-        if self.stochastic: # remove
+        if self.stochastic_gamma: # remove
             log_t = torch.distributions.Normal(
                 self.log_q_t_mean, torch.exp(self.log_q_t_log_sigma)).rsample()
             t = torch.exp(log_t)
+        else:
+            t = torch.exp(self.log_q_t_mean)
+            gammas = self.q_gamma_reduce if cell.reduction else self.q_gamma_normal
+            weights = [F.softmax(alpha/t, dim=-1) for alpha in gammas]
         for cell in self.cells:
             gammas = self.q_gamma_reduce if cell.reduction else self.q_gamma_normal
             if  self.stochastic:
@@ -239,6 +245,8 @@ class LVarSearchCNNController(nn.Module):
         self.stochastic_w =  int(kwargs['stochastic_w'])!=0
         if not self.stochastic_w:
             self.net.disable_stochastic_w()
+        if not self.stochastic_gamma:
+            self.net.stochastic_gamma = False
 
 
     
@@ -266,7 +274,11 @@ class LVarSearchCNNController(nn.Module):
 
 
     def new_epoch(self, e, writer):
-        self.log_t_h_log_sigma.data += self.delta
+        if self.net.stochastic_gamma:
+            self.log_t_h_log_sigma.data += self.delta
+        else:
+            self.net.log_q_t_log_q_t_mean = torch.log(torch.exp(self.net.log_q_t_log_q_t_mean) + self.delta)
+
 
     def forward(self, x):
         return self.net(x)
@@ -288,13 +300,14 @@ class LVarSearchCNNController(nn.Module):
                 k+= kl_normal_normal( w, torch.zeros_like(w), torch.exp(self.sigmas_w[w]), torch.exp(h))    
             
             
-        if not self.net.stochastic:
+        if not self.net.stochastic_gamma:
             return k
         #eps_q_t = torch.distributions.Normal(
         #    self.net.log_q_t_mean, torch.exp(self.net.log_q_t_log_sigma))
         #eps_p_t = torch.distributions.Normal(
         #    self.log_t_h_mean, torch.exp(self.log_t_h_log_sigma))
         #k += torch.distributions.kl_divergence(eps_q_t, eps_p_t).sum()
+        
         k +=  kl_normal_normal(self.net.log_q_t_mean,  self.log_t_h_mean,
         torch.exp(self.net.log_q_t_log_sigma),
         torch.exp(self.log_t_h_log_sigma)
