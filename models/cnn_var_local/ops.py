@@ -57,7 +57,7 @@ class LocalVarConv2d(nn.Conv2d):
             conved = conved_mu + \
             conved_si * torch.normal(torch.zeros_like(conved_mu), torch.ones_like(conved_mu))
             if self.bias:
-            conved = conved + torch.exp(2*self.log_sigma_b) *\
+              conved = conved + torch.exp(2*self.log_sigma_b) *\
                  torch.normal(torch.zeros_like(conved_mu), torch.ones_like(conved_mu)) 
         return conved
             

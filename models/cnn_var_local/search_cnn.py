@@ -85,10 +85,11 @@ class LVarSearchCNN(nn.Module):
 
     def disable_stochastic_w(self):
         logging.debug('disabling stochastic w')
+        print ('DDD')
         self.stochastic_w = False
         all_ = [self]
-            i = 0 
-            while i<len(all_):
+        i = 0 
+        while i<len(all_):
                 current = all_[i]
                 i+=1
                 try:
@@ -96,7 +97,7 @@ class LVarSearchCNN(nn.Module):
                         all_+=[c]
                 except:
                     pass
-            for c in all_:
+        for c in all_:
                 if 'stochastic' in c.__dict__:
                     c.stochastic = False 
 
