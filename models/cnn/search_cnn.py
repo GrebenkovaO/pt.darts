@@ -116,39 +116,19 @@ class SearchCNNController(nn.Module):
                 self._alphas.append((n, p))
 
         self.net = SearchCNN(C_in, C, n_classes, n_layers, n_nodes, stem_multiplier)
-        self.pruned = False 
+        self.pruned = False        
         
-    def forward(self, x):        
-        if self.use_gs and not self.pruned:
-            t = torch.ones(1).to(self.device)*self.t
-            weights_normal = [torch.distributions.RelaxedOneHotCategorical(
-                    t, logits=alpha).rsample([x.shape[0]]) for alpha in self.alpha_normal]
-            weights_reduce = [torch.distributions.RelaxedOneHotCategorical(
-                    t, logits=alpha).rsample([x.shape[0]]) for alpha in self.alpha_reduce]
-            #print ([w.shape for w in weights_normal])
-        else:            
-            if not self.pruned:
-                weights_normal = [F.softmax(alpha/self.t, dim=-1) for alpha in self.alpha_normal]
-                weights_reduce = [F.softmax(alpha/self.t, dim=-1) for alpha in self.alpha_reduce]
-            else:
-                weights_normal = self.alpha_normal
-                weights_reduce = self.alpha_reduce
+        
+    def forward(self, x):                        
+        if not self.pruned:
+            weights_normal = [F.softmax(alpha/self.t, dim=-1) for alpha in self.alpha_normal]
+            weights_reduce = [F.softmax(alpha/self.t, dim=-1) for alpha in self.alpha_reduce]
+        else:
+            weights_normal = self.alpha_normal
+            weights_reduce = self.alpha_reduce
 
-        if len(self.device_ids) == 1:
-            return self.net(x, weights_normal, weights_reduce)
-
-        # scatter x
-        xs = nn.parallel.scatter(x, self.device_ids)
-        # broadcast weights
-        wnormal_copies = broadcast_list(weights_normal, self.device_ids)
-        wreduce_copies = broadcast_list(weights_reduce, self.device_ids)
-
-        # replicate modules
-        replicas = nn.parallel.replicate(self.net, self.device_ids)
-        outputs = nn.parallel.parallel_apply(replicas,
-                                             list(zip(xs, wnormal_copies, wreduce_copies)),
-                                             devices=self.device_ids)
-        return nn.parallel.gather(outputs, self.device_ids[0])
+       
+        return self.net(x, weights_normal, weights_reduce)
 
     def loss(self, X, y):
         logits = self.forward(X)
@@ -184,6 +164,7 @@ class SearchCNNController(nn.Module):
                            reduce=gene_reduce, reduce_concat=concat)
 
     def prune(self, k = 2):
+        raise NotImplementedError()
         for edges in self.alpha_normal:
             edge_max, primitive_indices = torch.topk(
                 edges[:, :-1], 1)  # ignore 'none'
