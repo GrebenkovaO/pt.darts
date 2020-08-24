@@ -274,14 +274,10 @@ class LVarSearchCNNController(nn.Module):
         return self.net(x)
 
     def loss(self, X, y):
-        logits = self.forward(X)
-        if self.stochastic:
-            kld = self.kld()
-            #self.t_h.data += self.delta
-            return kld / self.dataset_size + self.criterion(logits, y)
-        else:
-            return self.criterion(logits, y)
-
+        logits = self.forward(X)        
+        kld = self.kld()    
+        return kld / self.dataset_size + self.criterion(logits, y)
+        
     def kld(self):
         k = 0
         if self.stochastic_w:
@@ -297,27 +293,27 @@ class LVarSearchCNNController(nn.Module):
         for handler in logger.handlers:
             org_formatters.append(handler.formatter)
             handler.setFormatter(logging.Formatter("%(message)s"))
-        if self.stochastic:
-            logger.info("####### ALPHA #######")
-            logger.info("# Alpha - normal")
-            for alpha in self.alpha_normal:
-                logger.info(F.softmax(alpha, dim=-1))
+    
+        logger.info("####### ALPHA #######")
+        logger.info("# Alpha - normal")
+        for alpha in self.alpha_normal:
+            logger.info(F.softmax(alpha, dim=-1))
 
-            logger.info("\n# Alpha - reduce")
-            for alpha in self.alpha_reduce:
-                logger.info(F.softmax(alpha, dim=-1))
-            logger.info("#####################")
+        logger.info("\n# Alpha - reduce")
+        for alpha in self.alpha_reduce:
+            logger.info(F.softmax(alpha, dim=-1))
+        logger.info("#####################")
 
-            logger.info("####### GAMMA #######")
-            logger.info("# Gamma - normal")
+        logger.info("####### GAMMA #######")
+        logger.info("# Gamma - normal")
 
-            for alpha in self.net.q_gamma_normal:
-                logger.info(F.softmax(alpha, dim=-1))
+        for alpha in self.net.q_gamma_normal:
+            logger.info(F.softmax(alpha, dim=-1))
 
-            logger.info("\n# Gamma - reduce")
-            for alpha in self.net.q_gamma_reduce:
-                logger.info(F.softmax(alpha, dim=-1))
-            logger.info("#####################")
+        logger.info("\n# Gamma - reduce")
+        for alpha in self.net.q_gamma_reduce:
+            logger.info(F.softmax(alpha, dim=-1))
+        logger.info("#####################")
 
             #logger.info('Temp: {}...{}'.format(str(torch.exp(self.net.log_q_t_mean-2*torch.exp(self.net.log_q_t_log_sigma))),
             #                                   str(torch.exp(self.net.log_q_t_mean+2*torch.exp(self.net.log_q_t_log_sigma)))))
