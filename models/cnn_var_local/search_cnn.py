@@ -24,7 +24,7 @@ def broadcast_list(l, device_ids):
 class LVarSearchCNN(nn.Module):
     """ Search CNN model """
 
-    def __init__(self,  C_in, C, n_classes, n_layers, n_nodes=4, stem_multiplier=3):
+    def __init__(self,  C_in, C, n_classes, n_layers, n_nodes=4, stem_multiplier=3, t=1.0, delta=-0.016):
         """
         Args:
             C_in: # of input channels
@@ -70,8 +70,8 @@ class LVarSearchCNN(nn.Module):
         self.gap = nn.AdaptiveAvgPool2d(1)
         self.linear = LocalVarLinear(C_p, n_classes)
         
-        self.t = float(kwargs['initial temp'])
-        self.delta = float(kwargs['delta'])
+        self.t = float(t)
+        self.delta = float(delta)
 
         self.q_gamma_normal = nn.ParameterList()
         self.q_gamma_reduce = nn.ParameterList()
@@ -106,7 +106,7 @@ class LVarSearchCNN(nn.Module):
 
     def forward(self, x):
         s0 = s1 = self.stem(x)
-        t = torch.ones(1).to(self.device)*self.t            
+        t = torch.ones(1).to(x.device)*self.t            
             
         for cell in self.cells:            
             gammas = self.q_gamma_reduce if cell.reduction else self.q_gamma_normal
@@ -198,10 +198,10 @@ class LVarSearchCNNController(nn.Module):
         # initialize architect parameters: alphas
         n_ops = len(gt.PRIMITIVES)
 
-        self.log_t_h_mean = nn.Parameter(torch.ones(
-            1) * (float(kwargs['initial temp log'])))
-        self.log_t_h_log_sigma = nn.Parameter(torch.ones(
-            1) * float(kwargs['initial temp log sigma']))
+        #self.log_t_h_mean = nn.Parameter(torch.ones(
+        #    1) * (float(kwargs['initial temp log'])))
+        #self.log_t_h_log_sigma = nn.Parameter(torch.ones(
+        #    1) * float(kwargs['initial temp log sigma']))
 
         self.delta = float(kwargs['delta'])
 
@@ -215,7 +215,7 @@ class LVarSearchCNNController(nn.Module):
         self.sample_num = int(kwargs['sample num'])
 
         self.net = LVarSearchCNN(C_in, C,  n_classes,
-                                 n_layers, n_nodes, stem_multiplier)
+                                 n_layers, n_nodes, stem_multiplier, kwargs['initial temp'], kwargs['delta'])
 
         for w in self.net.parameters():
             if 'sigma' in w.__dict__:
@@ -267,7 +267,7 @@ class LVarSearchCNNController(nn.Module):
 
 
     def new_epoch(self, e, writer):
-        self.t += self.delta
+        self.net.t += self.net.delta
         
 
     def forward(self, x):
@@ -280,7 +280,7 @@ class LVarSearchCNNController(nn.Module):
         
     def kld(self):
         k = 0
-        if self.stochastic_w:
+        if self.net.stochastic_w:
             for w, h in self.alpha_w_h.items():            
             
                 k+= kl_normal_normal( w, torch.zeros_like(w), torch.exp(self.sigmas_w[w]), torch.exp(h))    
@@ -318,7 +318,7 @@ class LVarSearchCNNController(nn.Module):
             #logger.info('Temp: {}...{}'.format(str(torch.exp(self.net.log_q_t_mean-2*torch.exp(self.net.log_q_t_log_sigma))),
             #                                   str(torch.exp(self.net.log_q_t_mean+2*torch.exp(self.net.log_q_t_log_sigma)))))
 
-        else:
+        if True:
             logger.info("####### GAMMA #######")
             logger.info("# Gamma - normal")
 
