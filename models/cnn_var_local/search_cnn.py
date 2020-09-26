@@ -114,7 +114,7 @@ class LVarSearchCNN(nn.Module):
                 weights = [torch.distributions.RelaxedOneHotCategorical(
                     t, logits=gamma).rsample([x.shape[0]]) for gamma in gammas]
             else:
-                weights = gammas
+                weights = torch.nn.softmax(gammas/t)
 
             s0, s1 = s1, cell(s0, s1, weights)
 
