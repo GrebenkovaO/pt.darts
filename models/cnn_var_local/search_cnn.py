@@ -114,7 +114,10 @@ class LVarSearchCNN(nn.Module):
                 weights = [torch.distributions.RelaxedOneHotCategorical(
                     t, logits=gamma).rsample([x.shape[0]]) for gamma in gammas]
             else:
-                weights = [torch.nn.functional.softmax(gamma/t) for gamma in gammas]
+                if self.t!=0:
+                    weights = [torch.nn.functional.softmax(gamma/t) for gamma in gammas]
+                else:
+                    weights = gammas
 
             s0, s1 = s1, cell(s0, s1, weights)
 
@@ -123,9 +126,9 @@ class LVarSearchCNN(nn.Module):
         logits = self.linear(out)
         return logits
 
-    def prune(self, k=2, layers=True):
-        raise NotImplementedError()
-        self.stochastic = False
+    def prune(self, w, k=2):
+        self.stochastic_gamma = False
+        self.t = 0
         for edges in self.q_gamma_normal:
             edge_max, primitive_indices = torch.topk(
                 edges[:, :-1], 1)  # ignore 'none'
@@ -145,7 +148,7 @@ class LVarSearchCNN(nn.Module):
             node_gene = []
             for edge_idx in topk_edge_indices:
                 edges.data[edge_idx, primitive_indices[edge_idx]] += 1
-        if layers:
+        if w:
             all_ = [self]
             i = 0 
             while i<len(all_):

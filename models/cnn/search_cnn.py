@@ -163,14 +163,18 @@ class SearchCNNController(nn.Module):
         return gt.Genotype(normal=gene_normal, normal_concat=concat,
                            reduce=gene_reduce, reduce_concat=concat)
 
-    def prune(self, k = 2):
-        raise NotImplementedError()
+    def prune(self, k = None):
+        
         for edges in self.alpha_normal:
             edge_max, primitive_indices = torch.topk(
                 edges[:, :-1], 1)  # ignore 'none'
             edges.data *= 0
+            if k:
+                k_ = k
+            else:
+                k_ = edge_max.shape[0]
             topk_edge_values, topk_edge_indices = torch.topk(
-                edge_max.view(-1), k)
+                edge_max.view(-1), k_)
             node_gene = []
 
             for edge_idx in topk_edge_indices:
@@ -179,8 +183,13 @@ class SearchCNNController(nn.Module):
             edge_max, primitive_indices = torch.topk(
                 edges[:, :-1], 1)  # ignore 'none'
             edges.data *= 0
+            if k:
+                k_ = k
+            else:
+                k_ = edge_max.shape[0]
             topk_edge_values, topk_edge_indices = torch.topk(
-                edge_max.view(-1), k)
+                edge_max.view(-1), k_)
+            
             node_gene = []
             for edge_idx in topk_edge_indices:
                 edges.data[edge_idx, primitive_indices[edge_idx]] += 1
