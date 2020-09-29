@@ -284,10 +284,24 @@ class LVarSearchCNNController(nn.Module):
     def kld(self):
         k = 0
         if self.net.stochastic_w:
-            for w, h in self.alpha_w_h.items():            
-            
+            for w, h in self.alpha_w_h.items():                        
                 k+= kl_normal_normal( w, torch.zeros_like(w), torch.exp(self.sigmas_w[w]), torch.exp(h))    
-            
+        
+        if self.net.stochastic_gamma:
+            t = torch.ones(1).to(self.device)*self.net.t            
+            for a, ga in zip(self.alpha_normal, self.net.q_gamma_normal):
+                g = torch.distributions.RelaxedOneHotCategorical(
+                    t, logits=ga)                                 
+                sample = (g.rsample(self.sample_num)+0.0001)
+                k += (g.log_prob(sample)).sum() / self.sample_num
+
+            for a, ga in zip(self.alpha_normal, self.net.q_gamma_reduce):
+                g = torch.distributions.RelaxedOneHotCategorical(
+                    t, logits=ga)                                 
+                sample = (g.rsample(self.sample_num)+0.0001)
+                k += (g.log_prob(sample)).sum() / self.sample_num
+
+
         return k
 
     def print_alphas(self, logger):
