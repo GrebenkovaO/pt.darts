@@ -197,6 +197,7 @@ class LVarSearchCNNController(nn.Module):
             device_ids = list(range(torch.cuda.device_count()))
         self.device_ids = device_ids
         self.criterion = nn.CrossEntropyLoss().to(device)
+        self.device = device
 
         # initialize architect parameters: alphas
         n_ops = len(gt.PRIMITIVES)
@@ -292,13 +293,13 @@ class LVarSearchCNNController(nn.Module):
             for a, ga in zip(self.alpha_normal, self.net.q_gamma_normal):
                 g = torch.distributions.RelaxedOneHotCategorical(
                     t, logits=ga)                                 
-                sample = (g.rsample(self.sample_num)+0.0001)
+                sample = (g.rsample([self.sample_num])+0.0001)
                 k += (g.log_prob(sample)).sum() / self.sample_num
 
             for a, ga in zip(self.alpha_normal, self.net.q_gamma_reduce):
                 g = torch.distributions.RelaxedOneHotCategorical(
                     t, logits=ga)                                 
-                sample = (g.rsample(self.sample_num)+0.0001)
+                sample = (g.rsample([self.sample_num])+0.0001)
                 k += (g.log_prob(sample)).sum() / self.sample_num
 
 
