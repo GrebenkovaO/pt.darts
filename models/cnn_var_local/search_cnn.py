@@ -126,25 +126,34 @@ class LVarSearchCNN(nn.Module):
         logits = self.linear(out)
         return logits
 
-    def prune(self, w, k=2):
+    def prune(self, w, k=None):
         self.stochastic_gamma = False
         self.t = 0
         for edges in self.q_gamma_normal:
-            edge_max, primitive_indices = torch.topk(
-                edges[:, :-1], 1)  # ignore 'none'
+            edge_max, primitive_indices = torch.topk(                
+                edges[:, :], 1) 
             edges.data *= 0
+            if k:
+                k_ = k
+            else:
+                k_ = edge_max.shape[0]
+
             topk_edge_values, topk_edge_indices = torch.topk(
-                edge_max.view(-1), k)
+                edge_max.view(-1), k_)
             node_gene = []
 
             for edge_idx in topk_edge_indices:
                 edges.data[edge_idx, primitive_indices[edge_idx]] += 1
         for edges in self.q_gamma_reduce:
             edge_max, primitive_indices = torch.topk(
-                edges[:, :-1], 1)  # ignore 'none'
+                edges[:, :], 1)  
             edges.data *= 0
+            if k:
+                k_ = k
+            else:
+                k_ = edge_max.shape[0]
             topk_edge_values, topk_edge_indices = torch.topk(
-                edge_max.view(-1), k)
+                edge_max.view(-1), k_)
             node_gene = []
             for edge_idx in topk_edge_indices:
                 edges.data[edge_idx, primitive_indices[edge_idx]] += 1

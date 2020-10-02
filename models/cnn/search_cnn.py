@@ -167,7 +167,7 @@ class SearchCNNController(nn.Module):
         
         for edges in self.alpha_normal:
             edge_max, primitive_indices = torch.topk(
-                edges[:, :-1], 1)  # ignore 'none'
+                edges[:], 1) 
             edges.data *= 0
             if k:
                 k_ = k
@@ -181,7 +181,7 @@ class SearchCNNController(nn.Module):
                 edges.data[edge_idx, primitive_indices[edge_idx]] += 1
         for edges in self.alpha_reduce:
             edge_max, primitive_indices = torch.topk(
-                edges[:, :-1], 1)  # ignore 'none'
+                edges[:], 1)  
             edges.data *= 0
             if k:
                 k_ = k

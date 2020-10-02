@@ -259,8 +259,8 @@ class MixedOp(nn.Module):
             x: input
             weights: weight for each operation
         """
-        
+        res = [op(x) for op in self._ops]      
         if len(weights[0].shape)==1: #non-scalar
-            return sum(w.view(-1, 1, 1, 1) * op(x) for w, op in zip(weights, self._ops))    
+            return sum(w * r for w, r in zip(weights.view(-1, 1), res))    
         else:
-            return sum(w * op(x) for w, op in zip(weights, self._ops))
+            return sum(w * r for w, r in zip(weights, res))
