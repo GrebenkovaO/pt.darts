@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from models.cnn.search_cells import SearchCell
 import genotypes as gt
 from torch.nn.parallel._functions import Broadcast
-from visualize import plot 
+from visualize import plot
 import logging
 import numpy as np
 
@@ -20,6 +20,7 @@ def broadcast_list(l, device_ids):
 
 class SearchCNN(nn.Module):
     """ Search CNN model """
+
     def __init__(self, C_in, C, n_classes, n_layers, n_nodes=4, stem_multiplier=3):
         """
         Args:
@@ -56,7 +57,8 @@ class SearchCNN(nn.Module):
             else:
                 reduction = False
 
-            cell = SearchCell(n_nodes, C_pp, C_p, C_cur, reduction_p, reduction)
+            cell = SearchCell(n_nodes, C_pp, C_p, C_cur,
+                              reduction_p, reduction)
             reduction_p = reduction
             self.cells.append(cell)
             C_cur_out = C_cur * n_nodes
@@ -73,27 +75,28 @@ class SearchCNN(nn.Module):
             s0, s1 = s1, cell(s0, s1, weights)
 
         out = self.gap(s1)
-        out = out.view(out.size(0), -1) # flatten
+        out = out.view(out.size(0), -1)  # flatten
         logits = self.linear(out)
         return logits
 
 
 class SearchCNNController(nn.Module):
     """ SearchCNN controller supporting multi-gpu """
-    def __init__(self, device, **kwargs):    
+
+    def __init__(self, device, **kwargs):
         super().__init__()
         C_in = int(kwargs['input_channels'])
         C = int(kwargs['init_channels'])
         n_classes = int(kwargs['n_classes'])
         n_layers = int(kwargs['layers'])
-        n_nodes= int(kwargs['n_nodes'])
-        stem_multiplier= int(kwargs['stem_multiplier'])
-        device_ids= kwargs.get('device_ids', None)
-        self.use_gs = int(kwargs['use_gs'])!=0
+        n_nodes = int(kwargs['n_nodes'])
+        stem_multiplier = int(kwargs['stem_multiplier'])
+        device_ids = kwargs.get('device_ids', None)
+        self.use_gs = int(kwargs['use_gs']) != 0
         self.t = float(kwargs['initial temp'])
         self.delta = float(kwargs['delta'])
         self.n_nodes = n_nodes
-        
+
         if device_ids is None:
             device_ids = list(range(torch.cuda.device_count()))
         self.device_ids = device_ids
@@ -106,8 +109,10 @@ class SearchCNNController(nn.Module):
         self.alpha_reduce = nn.ParameterList()
 
         for i in range(n_nodes):
-            self.alpha_normal.append(nn.Parameter(1e-3*torch.randn(i+2, n_ops)))
-            self.alpha_reduce.append(nn.Parameter(1e-3*torch.randn(i+2, n_ops)))
+            self.alpha_normal.append(
+                nn.Parameter(1e-3*torch.randn(i+2, n_ops)))
+            self.alpha_reduce.append(
+                nn.Parameter(1e-3*torch.randn(i+2, n_ops)))
 
         # setup alphas list
         self._alphas = []
@@ -115,19 +120,26 @@ class SearchCNNController(nn.Module):
             if 'alpha' in n:
                 self._alphas.append((n, p))
 
-        self.net = SearchCNN(C_in, C, n_classes, n_layers, n_nodes, stem_multiplier)
-        self.pruned = False        
-        
-        
-    def forward(self, x):                        
+        self.net = SearchCNN(C_in, C, n_classes, n_layers,
+                             n_nodes, stem_multiplier)
+        self.pruned = False
+
+    def forward(self, x):
         if not self.pruned:
-            weights_normal = [F.softmax(alpha/self.t, dim=-1) for alpha in self.alpha_normal]
-            weights_reduce = [F.softmax(alpha/self.t, dim=-1) for alpha in self.alpha_reduce]
+            if self.use_gs:
+                weights_normal = [torch.distributions.RelaxedOneHotCategorical(
+                    self.t, logits=alpha).rsample([x.shape[0]]) for alpha in self.alpha_normal]
+                weights_reduce = [torch.distributions.RelaxedOneHotCategorical(
+                    self.t, logits=alpha).rsample([x.shape[0]]) for alpha in self.alpha_reduce]
+            else:
+                weights_normal = [F.softmax(alpha/self.t, dim=-1)
+                                  for alpha in self.alpha_normal]
+                weights_reduce = [F.softmax(alpha/self.t, dim=-1)
+                                  for alpha in self.alpha_reduce]
         else:
             weights_normal = self.alpha_normal
             weights_reduce = self.alpha_reduce
 
-       
         return self.net(x, weights_normal, weights_reduce)
 
     def loss(self, X, y):
@@ -158,16 +170,16 @@ class SearchCNNController(nn.Module):
     def genotype(self):
         gene_normal = gt.parse(self.alpha_normal, k=2)
         gene_reduce = gt.parse(self.alpha_reduce, k=2)
-        concat = range(2, 2+self.n_nodes) # concat all intermediate nodes
+        concat = range(2, 2+self.n_nodes)  # concat all intermediate nodes
 
         return gt.Genotype(normal=gene_normal, normal_concat=concat,
                            reduce=gene_reduce, reduce_concat=concat)
 
-    def prune(self, k = None):
-        
+    def prune(self, k=None):
+
         for edges in self.alpha_normal:
             edge_max, primitive_indices = torch.topk(
-                edges[:], 1) 
+                edges[:], 1)
             edges.data *= 0
             if k:
                 k_ = k
@@ -181,7 +193,7 @@ class SearchCNNController(nn.Module):
                 edges.data[edge_idx, primitive_indices[edge_idx]] += 1
         for edges in self.alpha_reduce:
             edge_max, primitive_indices = torch.topk(
-                edges[:], 1)  
+                edges[:], 1)
             edges.data *= 0
             if k:
                 k_ = k
@@ -189,13 +201,12 @@ class SearchCNNController(nn.Module):
                 k_ = edge_max.shape[0]
             topk_edge_values, topk_edge_indices = torch.topk(
                 edge_max.view(-1), k_)
-            
+
             node_gene = []
             for edge_idx in topk_edge_indices:
                 edges.data[edge_idx, primitive_indices[edge_idx]] += 1
         self.pruned = True
         self.use_gs = False
-                
 
     def weights(self):
         return self.net.parameters()
@@ -210,23 +221,20 @@ class SearchCNNController(nn.Module):
     def named_alphas(self):
         for n, p in self._alphas:
             yield n, p
-            
+
     def plot_genotype(self, plot_path, caption):
         plot(self.genotype().normal, plot_path+'-normal', caption+'-normal')
         plot(self.genotype().reduce, plot_path+'-reduce', caption+'-reduce')
-        
-    def new_epoch(self,e,w):
+
+    def new_epoch(self, e, w):
         self.t = self.t + self.delta
-        
-        
+
     def writer_callback(self, writer, cur_step):
         hist_values = []
         for val in self.alphas():
             hist_values.extend(F.softmax(val).cpu().detach().numpy().tolist())
         hist_values = np.array(hist_values).flatten().tolist()
-        writer.add_histogram('train/alphas', hist_values, cur_step)# %%
-        
-        
+        writer.add_histogram('train/alphas', hist_values, cur_step)  # %%
+
         #writer.add_scalar('train/temp_min', torch.exp(self.net.log_q_t_mean-2*torch.exp(self.net.log_q_t_log_sigma)).cpu().detach().numpy(), cur_step)
         #writer.add_scalar('train/temp_max', torch.exp(self.net.log_q_t_mean+2*torch.exp(self.net.log_q_t_log_sigma)).cpu().detach().numpy(), cur_step)
-        
