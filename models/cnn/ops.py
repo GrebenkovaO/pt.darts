@@ -199,6 +199,11 @@ class MixedOp(nn.Module):
             #for w, op in zip(weights, self._ops):
             #    print (w.shape, op(x).shape)
             
-            return sum(w.view(-1, 1, 1, 1) * op(x) for w, op in zip(weights, self._ops))    
+            res =  sum(w.view(-1, 1, 1, 1) * op(x) for w, op in zip(weights, self._ops))    
         else:
-            return sum(w * op(x) for w, op in zip(weights, self._ops))
+            res =  sum(w * op(x) for w, op in zip(weights, self._ops))
+        if sum(weights)<0:            
+            return torch.randn(res.size()).to(res.device) * sum(weights)
+        else:
+            return res 
+
